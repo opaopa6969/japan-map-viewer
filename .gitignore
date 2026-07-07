@@ -1,0 +1,6 @@
+node_modules/
+*.log
+.mapdata/
+.env.local
+public/img/
+public/js/basemap.js

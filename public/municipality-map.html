@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tetsugo — 自治体統廃合マップ (MapLibre + deck.gl)</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
+
+<style>
+  :root { color-scheme: dark; --bg:#0e1116; --panel:#1a1f29; --border:#2c3340;
+          --text:#dce1e8; --muted:#8b93a1; --accent:#4e79a7; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+  #side { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 12px; }
+  #side h1 { font-size: 15px; margin: 0 0 2px; }
+  #side .sub { font-size: 11px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+  .group { margin-bottom: 16px; }
+  .group > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: 100%; }
+  .seg button { flex: 1; background: var(--bg); color: var(--text); border: 0; padding: 6px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+  .seg button.active { background: var(--accent); color: #fff; }
+  select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+  .chk { cursor: pointer; user-select: none; }
+  .count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #main { position: relative; }
+  #map { position: absolute; inset: 0; }
+  #status { position: absolute; left: 10px; bottom: 10px; z-index: 5; background: rgba(16,20,28,.78);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+  #tip { position: absolute; z-index: 6; pointer-events: none; background: rgba(16,20,28,.92);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 12px; max-width: 240px; display: none; line-height: 1.5; }
+  #tip b { color: var(--text); } #tip .k { color: var(--muted); }
+  .note { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  a.back { color: var(--muted); font-size: 12px; text-decoration: none; } a.back:hover { color: var(--text); }
+  #hist { width: 100%; height: 64px; display: block; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h1>自治体統廃合マップ</h1>
+    <p class="sub">e-Stat 自治体変遷(廃置分合等) 1970〜2024・3,507件。<br><a class="back" href="/address-map-gl">← 住所マップ(GL)</a></p>
+
+    <div class="group">
+      <h2>粒度</h2>
+      <div class="seg" id="gran">
+        <button data-gran="pref" class="active">都道府県</button>
+        <button data-gran="muni">市区町村</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>指標</h2>
+      <div class="seg" id="metric">
+        <button data-metric="count" class="active">統廃合件数</button>
+        <button data-metric="lastyear">最終統廃合年</button>
+      </div>
+      <div id="legend" style="margin-top:8px"></div>
+    </div>
+
+    <div class="group">
+      <h2>年別件数（1970–2024）</h2>
+      <svg id="hist" viewBox="0 0 280 64" preserveAspectRatio="none"></svg>
+      <div class="note" id="histNote"></div>
+    </div>
+
+    <div class="group">
+      <h2>内訳</h2>
+      <div id="types"></div>
+    </div>
+
+    <div class="group">
+      <h2>ベース地図</h2>
+      <div class="seg" id="base">
+        <button data-base="dark" class="active">ダーク</button>
+        <button data-base="gsi">地理院</button>
+      </div>
+      <label class="row chk" style="margin-top:6px"><input type="checkbox" id="kanji" checked><span>地名を漢字で表示</span></label>
+    </div>
+
+    <p class="note">※現況境界に塗るため、市区町村は「統廃合履歴が現コードに残る自治体」のみ着色（消滅した旧自治体は境界が無く非表示）。都道府県は全件を集約。</p>
+  </aside>
+
+  <main id="main">
+    <div id="map"></div>
+    <div id="status">読み込み中…</div>
+    <div id="tip"></div>
+  </main>
+</div>
+
+<script type="module">
+import { createMapModel } from '/js/mapcore/model.js';
+import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
+import { createPrefectureIndex } from '/js/mapcore/prefectures.js';
+import { createMunicipalityIndex } from '/js/mapcore/municipalities.js';
+import { createRampLegend } from '/js/mapcore/metrics.js';
+
+const $ = (id) => document.getElementById(id);
+const tip = $('tip');
+
+let renderer = null;
+let changes = null;                 // municipality-changes.json
+let gran = 'pref';                  // pref | muni
+let metric = 'count';               // count | lastyear
+let curChoro = null;                // { valueOf, fmt, label }
+const region = { pref: null, muni: null };
+const YEAR0 = 1970;
+
+// 指標メタ。lastyear は renderer の v/max 着色に合わせ (年-1970) に正規化して max=範囲。
+function metricSpec() {
+  if (metric === 'lastyear') {
+    const [y0, y1] = changes.yearRange;
+    return {
+      label: '最終統廃合年',
+      field: 'lastYear',
+      transform: (y) => y - YEAR0,          // 0..(y1-1970)
+      max: y1 - YEAR0,
+      fmt: (t) => `${YEAR0 + Math.round(t)}年`,
+    };
+  }
+  return { label: '統廃合件数', field: 'count', transform: (v) => v, max: null, fmt: (t) => `${Math.round(t)}件` };
+}
+
+async function ensureRegion(kind) {
+  if (region[kind]) return true;
+  $('status').textContent = `${kind === 'muni' ? '市区町村' : '都道府県'}ポリゴン読み込み中…`;
+  try {
+    const file = kind === 'muni' ? 'japan-municipalities.json' : 'japan-prefectures.json';
+    const data = await (await fetch(`/data/${file}`)).json();
+    region[kind] = kind === 'muni' ? createMunicipalityIndex(data) : createPrefectureIndex(data);
+    return true;
+  } catch (e) { console.warn(e); return false; }
+}
+
+// 現粒度×指標の { values:Map(id->transformed), max, fmt, label, raw:Map(id->生値) }
+function buildValues() {
+  const spec = metricSpec();
+  const src = gran === 'muni' ? changes.byLgCode : changes.byPref;
+  const values = new Map();
+  const raw = new Map();
+  let dataMax = 0;
+  for (const [k, v] of Object.entries(src)) {
+    const val = v[spec.field];
+    if (val == null) continue;
+    const id = gran === 'muni' ? k : Number(k);
+    const t = spec.transform(val);
+    values.set(id, t);
+    raw.set(id, val);
+    if (t > dataMax) dataMax = t;
+  }
+  return { values, raw, max: spec.max ?? (dataMax || 1), fmt: spec.fmt, label: spec.label };
+}
+
+async function apply() {
+  if (!await ensureRegion(gran)) { $('status').textContent = '地域データ読み込み失敗'; return; }
+  const index = region[gran];
+  const v = buildValues();
+  curChoro = { index, ...v };
+  renderer.setChoropleth({ index, kind: 'metric', values: v.values, max: v.max });
+  $('legend').innerHTML = '';
+  $('legend').appendChild(createRampLegend(document, { max: v.max, label: v.label, fmt: v.fmt }));
+  const colored = v.values.size;
+  $('status').textContent = `${gran === 'muni' ? '市区町村' : '都道府県'} / ${v.label}：${colored.toLocaleString()} 地域を着色`;
+}
+
+function onPick(object, pos, info) {
+  if (!object || !info || (info.layer && info.layer.id !== 'choro')) { tip.style.display = 'none'; return; }
+  const raw = curChoro.raw.get(object.properties.id);
+  const valStr = raw == null ? '記録なし' : (metric === 'lastyear' ? `${raw}年` : `${raw}件`);
+  tip.innerHTML = `<b>${object.properties.name}</b><div class="k">${curChoro.label}: ${valStr}</div>`;
+  tip.style.display = 'block';
+  tip.style.left = (pos.x + 12) + 'px';
+  tip.style.top = (pos.y + 12) + 'px';
+}
+
+// 年別件数のミニ棒グラフ（平成大合併の山を可視化）。
+function drawHistogram() {
+  const svg = $('hist');
+  const hist = changes.yearHistogram;
+  const [y0, y1] = changes.yearRange;
+  const years = []; for (let y = y0; y <= y1; y++) years.push(y);
+  const W = 280, H = 64, bw = W / years.length;
+  // 先にピークを確定してから描画（ピーク棒だけ赤）。
+  let peakYear = y0, peakN = 0;
+  for (const y of years) { const n = hist[y] || 0; if (n > peakN) { peakN = n; peakYear = y; } }
+  const max = peakN || 1;
+  svg.innerHTML = years.map((y, i) => {
+    const n = hist[y] || 0;
+    const h = (n / max) * (H - 2);
+    const color = y === peakYear ? '#e15759' : '#4e79a7';
+    return `<rect x="${(i * bw).toFixed(2)}" y="${(H - h).toFixed(2)}" width="${Math.max(0.6, bw - 0.4).toFixed(2)}" height="${h.toFixed(2)}" fill="${color}"/>`;
+  }).join('');
+  $('histNote').textContent = `ピーク ${peakYear}年 ${peakN.toLocaleString()}件（平成の大合併）`;
+}
+
+function drawTypes() {
+  const box = $('types');
+  const labels = changes.typeLabels;
+  const totals = changes.typeTotals;
+  box.innerHTML = Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([k, n]) =>
+    `<div class="row"><span>${labels[k] || k}</span><span class="count">${n.toLocaleString()}</span></div>`).join('');
+}
+
+// UI 配線
+$('gran').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#gran button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active'); gran = b.dataset.gran; apply();
+});
+$('metric').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#metric button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active'); metric = b.dataset.metric; apply();
+});
+$('base').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#base button').forEach((x) => x.classList.remove('active'));
+  b.classList.add('active'); renderer.setBase(b.dataset.base);
+});
+$('kanji').addEventListener('change', (e) => renderer.setKanji(e.target.checked));
+
+(async () => {
+  try { changes = await (await fetch('/data/municipality-changes.json')).json(); }
+  catch (e) { $('status').textContent = 'municipality-changes.json 読み込み失敗（scripts/build-municipality-changes.mjs を実行）'; return; }
+  // 点は持たない純コロプレス。空モデルで renderer を起こす。
+  const model = createMapModel({ categories: [], points: [] });
+  renderer = createRendererDeck($('map'), { model, onPick });
+  drawHistogram();
+  drawTypes();
+  apply();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>japan-map-viewer — デモ</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0e1116; color: #e6e8eb; max-width: 760px; margin: 40px auto; padding: 0 16px; line-height: 1.7; }
+  a { color: #7ab8ff; }
+  h1 { font-size: 1.5rem; }
+  li { margin: 8px 0; }
+  code { background: #1b2027; padding: 1px 6px; border-radius: 4px; font-size: .9em; }
+  .note { color: #9aa4b0; font-size: .9em; }
+</style>
+</head>
+<body>
+<h1>🗾 japan-map-viewer</h1>
+<p>日本地図ビューア — 住所点群・コロプレス・自治体統廃合タイムライン。ライブラリ本体は <code>/js/mapcore/</code>(純ESM)。</p>
+<ul>
+  <li><a href="/address-map-gl">住所マップ GL</a> — MapLibre + deck.gl。点群/ヘックス/ヒート+コロプレス <span class="note">(推奨・basemap 生成不要)</span></li>
+  <li><a href="/address-map">住所マップ 2D</a> — canvas 直描き <span class="note">(要 <code>npm run fetch:basemap</code>)</span></li>
+  <li><a href="/municipality-map">自治体マップ</a> — 市区町村コロプレス</li>
+  <li><a href="/municipality-timeline">統廃合タイムライン</a> — 自治体統廃合の再生</li>
+</ul>
+<p class="note">住所点群は既定で同梱サンプル。<code>VACANT_SERVICE_URL</code> を設定すると vacant-service の
+<code>/api/errorAddresses/geo</code> をプロキシして実データを表示する。</p>
+</body>
+</html>

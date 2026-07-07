@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tetsugo — 自治体統廃合タイムライン (MapLibre + deck.gl)</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
+
+<style>
+  :root { color-scheme: dark; --bg:#0e1116; --panel:#1a1f29; --border:#2c3340;
+          --text:#dce1e8; --muted:#8b93a1; --accent:#4e79a7; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+  #side { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 12px; }
+  #side h1 { font-size: 15px; margin: 0 0 2px; }
+  #side .sub { font-size: 11px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+  .group { margin-bottom: 16px; }
+  .group > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; width: 100%; }
+  .seg button { flex: 1; background: var(--bg); color: var(--text); border: 0; padding: 6px 8px; cursor: pointer; font: inherit; font-size: 12px; }
+  .seg button.active { background: var(--accent); color: #fff; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+  .count { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  input[type=range] { width: 100%; }
+  a.back { color: var(--muted); font-size: 12px; text-decoration: none; } a.back:hover { color: var(--text); }
+  .note { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  #hist { width: 100%; height: 56px; display: block; }
+  /* 再生バー（地図下部オーバーレイ） */
+  #transport { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6; display: flex; align-items: center; gap: 12px;
+    background: rgba(16,20,28,.82); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  #play { width: 40px; height: 40px; flex: 0 0 auto; border-radius: 50%; border: 0; background: var(--accent); color: #fff; font-size: 16px; cursor: pointer; }
+  #yearLabel { font-size: 22px; font-variant-numeric: tabular-nums; min-width: 96px; }
+  #yearLabel small { font-size: 12px; color: var(--muted); }
+  #scrub { flex: 1; }
+  #tip { position: absolute; z-index: 7; pointer-events: none; background: rgba(16,20,28,.92);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px; font-size: 12px; max-width: 240px; display: none; line-height: 1.5; }
+  #tip b { color: var(--text); } #tip .k { color: var(--muted); }
+  #main { position: relative; }
+  #map { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h1>自治体統廃合タイムライン</h1>
+    <p class="sub">e-Stat 自治体変遷 1970〜2024・3,507件を再生。<br><a class="back" href="/municipality-map">← 統廃合コロプレス(案B)</a></p>
+
+    <div class="group">
+      <h2>表示</h2>
+      <div class="seg" id="mode">
+        <button data-mode="single" class="active">単年フラッシュ</button>
+        <button data-mode="cumulative">累積</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>再生速度</h2>
+      <div class="seg" id="speed">
+        <button data-ms="700">遅</button>
+        <button data-ms="380" class="active">標準</button>
+        <button data-ms="160">速</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>年別件数</h2>
+      <svg id="hist" viewBox="0 0 280 56" preserveAspectRatio="none"></svg>
+    </div>
+
+    <div class="group" id="cats">
+      <h2>変更種別</h2>
+    </div>
+
+    <div class="group">
+      <h2>ベース地図</h2>
+      <div class="seg" id="base">
+        <button data-base="dark" class="active">ダーク</button>
+        <button data-base="gsi">地理院</button>
+      </div>
+      <label class="row chk" style="margin-top:6px"><input type="checkbox" id="kanji" checked><span>地名を漢字で表示</span></label>
+    </div>
+
+    <p class="note">※現況境界のみのため、消滅した旧自治体は所属県の中心付近に配置（約2/3）。厳密な旧位置ではなく「いつ・どの県で・何件」を掴む用途。</p>
+  </aside>
+
+  <main id="main">
+    <div id="map"></div>
+    <div id="tip"></div>
+    <div id="transport">
+      <button id="play" title="再生/停止">▶</button>
+      <div id="yearLabel">—</div>
+      <input id="scrub" type="range" min="1970" max="2024" value="1970" step="1">
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { createMapModel } from '/js/mapcore/model.js';
+import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
+
+const $ = (id) => document.getElementById(id);
+const tip = $('tip');
+
+const TYPES = [
+  { key: 'newly',      label: '新設合併',   color: '#4e79a7' },
+  { key: 'absorb',     label: '編入合併',   color: '#59a14f' },
+  { key: 'designated', label: '政令市施行', color: '#e15759' },
+  { key: 'city',       label: '市制',       color: '#edc948' },
+  { key: 'town',       label: '町制',       color: '#b07aa1' },
+  { key: 'other',      label: 'その他',     color: '#9c755f' },
+];
+const TYPE_LABEL = Object.fromEntries(TYPES.map((t) => [t.key, t.label]));
+
+let model = null;
+let renderer = null;
+let changes = null;
+let mode = 'single';       // single | cumulative
+let year = 1970;
+let y0 = 1970; let y1 = 2024;
+let playing = false;
+let timer = null;
+let stepMs = 380;
+
+function applyYear() {
+  model.filter.range = mode === 'single'
+    ? { prop: 'year', min: year, max: year }
+    : { prop: 'year', min: y0, max: year };
+  renderer.refresh();
+  $('scrub').value = String(year);
+  const n = model.visible().length;
+  $('yearLabel').innerHTML = `${year}<small> 年 / ${n.toLocaleString()}件</small>`;
+  drawHistMarker();
+}
+
+function setYear(y) { year = Math.max(y0, Math.min(y1, y)); applyYear(); }
+
+function play() { if (playing) return; playing = true; $('play').textContent = '⏸';
+  timer = setInterval(() => { setYear(year >= y1 ? y0 : year + 1); }, stepMs); }
+function pause() { playing = false; $('play').textContent = '▶'; if (timer) clearInterval(timer); timer = null; }
+$('play').addEventListener('click', () => (playing ? pause() : play()));
+$('scrub').addEventListener('input', (e) => { pause(); setYear(Number(e.target.value)); });
+
+$('mode').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#mode button').forEach((x) => x.classList.remove('active')); b.classList.add('active');
+  mode = b.dataset.mode; applyYear(); });
+$('speed').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#speed button').forEach((x) => x.classList.remove('active')); b.classList.add('active');
+  stepMs = Number(b.dataset.ms); if (playing) { pause(); play(); } });
+$('base').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return;
+  document.querySelectorAll('#base button').forEach((x) => x.classList.remove('active')); b.classList.add('active');
+  renderer.setBase(b.dataset.base); });
+$('kanji').addEventListener('change', (e) => renderer.setKanji(e.target.checked));
+
+function buildCategoryUI() {
+  const box = $('cats');
+  const counts = model.counts();
+  for (const c of model.categories) {
+    const row = document.createElement('label');
+    row.className = 'row chk';
+    row.innerHTML = `<input type="checkbox" checked data-cat="${c.key}">`
+      + `<span class="legend-dot" style="background:${c.color}"></span><span>${c.label}</span>`
+      + `<span class="count">${(counts[c.key] || 0).toLocaleString()}</span>`;
+    row.querySelector('input').addEventListener('change', (e) => {
+      if (e.target.checked) model.filter.categories.add(c.key); else model.filter.categories.delete(c.key);
+      applyYear();
+    });
+    box.appendChild(row);
+  }
+}
+
+function onPick(object, pos, info) {
+  if (!object || !info || (info.layer && info.layer.id !== 'pts')) { tip.style.display = 'none'; return; }
+  tip.innerHTML = `<b>${object.label || object.props.code}</b>`
+    + `<div class="k">${object.props.year}年 · ${TYPE_LABEL[object.category] || object.category}</div>`;
+  tip.style.display = 'block';
+  tip.style.left = (pos.x + 12) + 'px'; tip.style.top = (pos.y + 12) + 'px';
+}
+
+// 年別ヒスト（現在年を縦線でマーク）。
+let histBars = '';
+function drawHist() {
+  const hist = changes.yearHistogram;
+  const years = []; for (let y = y0; y <= y1; y++) years.push(y);
+  const max = Math.max(...years.map((y) => hist[y] || 0));
+  const W = 280, H = 56, bw = W / years.length;
+  histBars = years.map((y, i) => {
+    const n = hist[y] || 0; const h = max ? (n / max) * (H - 2) : 0;
+    return `<rect x="${(i * bw).toFixed(2)}" y="${(H - h).toFixed(2)}" width="${Math.max(0.6, bw - 0.4).toFixed(2)}" height="${h.toFixed(2)}" fill="#4e79a7"/>`;
+  }).join('');
+  drawHistMarker();
+}
+function drawHistMarker() {
+  const W = 280, H = 56, span = (y1 - y0) || 1;
+  const x = ((year - y0) / span) * W;
+  $('hist').innerHTML = histBars + `<rect x="${(x - 0.8).toFixed(2)}" y="0" width="1.6" height="${H}" fill="#e15759"/>`;
+}
+
+(async () => {
+  try { changes = await (await fetch('/data/municipality-changes.json')).json(); }
+  catch (e) { $('yearLabel').textContent = 'データ読込失敗'; return; }
+  [y0, y1] = changes.yearRange;
+  $('scrub').min = String(y0); $('scrub').max = String(y1);
+  year = y0;
+
+  const points = changes.events.map((e, i) => ({
+    id: `ev-${i}`, lat: e.lat, lon: e.lon, category: e.t,
+    label: e.n, props: { year: e.y, code: e.c, prefId: e.p },
+  }));
+  model = createMapModel({ categories: TYPES, points });
+  // 単発イベントも視認できるよう点を大きめに（呼吸演出付き）。
+  renderer = createRendererDeck($('map'), { model, onPick, pointRadius: { radius: 4, min: 3, max: 10 } });
+
+  buildCategoryUI();
+  drawHist();
+  applyYear();
+  // 少し待ってから自動再生（地図ロード後）。
+  setTimeout(() => play(), 1200);
+})();
+</script>
+</body>
+</html>

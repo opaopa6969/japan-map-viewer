@@ -1,0 +1,19 @@
+{
+  "name": "japan-map-viewer",
+  "version": "0.1.0",
+  "description": "日本地図ビューア — 住所点群・コロプレス(都道府県/市区町村)・自治体統廃合タイムラインを 2D canvas / MapLibre+deck.gl / 3D 地形(注入) で描く純ESMライブラリ+デモ。",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "fetch:map": "node scripts/fetch-map-data.mjs && node scripts/fetch-land-prices.mjs",
+    "fetch:basemap": "node scripts/fetch-basemap.mjs",
+    "fetch:vacancy": "node scripts/fetch-estat-vacancy.mjs",
+    "build:changes": "node scripts/build-municipality-changes.mjs",
+    "build:sample-points": "node scripts/build-sample-error-points.mjs"
+  },
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  }
+}

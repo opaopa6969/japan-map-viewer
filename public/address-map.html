@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tetsugo — 住所/エラー マップ</title>
+<style>
+  :root { color-scheme: dark; --bg:#0e1116; --panel:#1a1f29; --border:#2c3340; --text:#dce1e8; --muted:#8b93a1; --accent:#4e79a7; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 280px 1fr; height: 100%; }
+  /* 左パネル */
+  #side { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 12px; }
+  #side h1 { font-size: 15px; margin: 0 0 2px; }
+  #side .sub { font-size: 11px; color: var(--muted); margin: 0 0 12px; }
+  .group { margin-bottom: 14px; }
+  .group > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 13px; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 3px; flex: 0 0 auto; }
+  .count { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  input[type=search], select { width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: var(--bg); color: var(--text); border: 0; padding: 5px 12px; cursor: pointer; font: inherit; }
+  .seg button.active { background: var(--accent); color: #fff; }
+  .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .pref-list { max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+  .mini { font-size: 11px; color: var(--muted); }
+  .opa-ramp-legend { font-size: 11px; color: var(--muted); }
+  .opa-ramp-title { margin-bottom: 2px; }
+  .opa-ramp-bar { height: 10px; border-radius: 3px; border: 1px solid var(--border); }
+  .opa-ramp-ticks { display: flex; justify-content: space-between; margin-top: 2px; }
+  button.btn { background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit; }
+  button.ghost { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+  /* メイン */
+  #main { position: relative; }
+  #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #topbar { position: absolute; top: 10px; right: 10px; z-index: 5; display: flex; gap: 8px; align-items: center; }
+  #status { position: absolute; left: 10px; bottom: 10px; z-index: 5; background: rgba(16,20,28,.7);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+  #detail { position: absolute; z-index: 6; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; font-size: 12.5px; max-width: 320px; box-shadow: 0 8px 24px rgba(0,0,0,.4); display: none; }
+  #detail h3 { margin: 0 0 6px; font-size: 13px; }
+  #detail .kv { display: flex; gap: 8px; padding: 1px 0; }
+  #detail .k { color: var(--muted); flex: 0 0 84px; }
+  #detail .close { position: absolute; top: 6px; right: 8px; cursor: pointer; color: var(--muted); }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; z-index: 9; color: var(--muted); background: var(--bg); }
+  #loading.hidden { display: none; }
+  a { color: #9cc4ff; }
+</style>
+</head>
+<body>
+  <div id="app">
+    <aside id="side">
+      <h1>🗺 住所 / エラー マップ</h1>
+      <p class="sub">vacant-service のエラー住所を地図上に可視化（サンプルデータ）</p>
+
+      <div class="group">
+        <h2>表示モード</h2>
+        <div class="seg" id="mode">
+          <button data-mode="2d">2D（軽量）</button>
+          <button data-mode="3d">3D 地形</button>
+        </div>
+        <div class="mini" id="modeNote" style="margin-top:4px"></div>
+      </div>
+
+      <div class="group">
+        <h2>レイヤ</h2>
+        <label class="chk"><input type="checkbox" id="layerPoints" checked> 点（エラー住所）</label>
+        <label class="chk"><input type="checkbox" id="layerGrid"> グリッド集約（柱/セル）</label>
+        <div class="row" style="margin-top:6px">
+          <span class="mini">コロプレス(2D)</span>
+          <select id="choroMode" style="flex:1">
+            <option value="off">なし</option>
+            <option value="pref-errors">都道府県・エラー件数</option>
+            <option value="muni-errors">市区町村・エラー件数</option>
+            <option value="pref-vacancy">都道府県・空き家率(estat)</option>
+            <option value="muni-vacancy">市区町村・空き家率(estat)</option>
+          </select>
+        </div>
+        <div id="choroLegend" style="margin-top:6px"></div>
+        <div class="row" style="margin-top:4px">
+          <span class="mini">セル粒度</span>
+          <input type="range" id="gridDeg" min="0.25" max="2" step="0.25" value="0.5" style="flex:1">
+          <span class="mini" id="gridDegVal">0.5°</span>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2>エラー種別</h2>
+        <div id="legend"></div>
+      </div>
+
+      <div class="group">
+        <h2>都道府県</h2>
+        <div class="row"><button class="btn ghost" id="prefAll" style="font-size:11px;padding:2px 8px">全選択</button>
+          <button class="btn ghost" id="prefNone" style="font-size:11px;padding:2px 8px">全解除</button></div>
+        <div class="pref-list" id="prefList"></div>
+      </div>
+
+      <div class="group">
+        <h2>検索</h2>
+        <input type="search" id="search" placeholder="住所/属性で絞り込み…">
+      </div>
+    </aside>
+
+    <main id="main">
+      <canvas id="view"></canvas>
+      <div id="topbar">
+        <button class="btn ghost" id="home">ホーム</button>
+      </div>
+      <div id="status">読み込み中…</div>
+      <div id="detail"></div>
+      <div id="loading"><div>マップを初期化中…</div></div>
+    </main>
+  </div>
+
+  <script type="importmap">
+  { "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  } }
+  </script>
+
+  <script type="module">
+    import { createMapModel } from '/js/mapcore/model.js';
+    import { createPrefectureIndex } from '/js/mapcore/prefectures.js';
+    import { createMunicipalityIndex } from '/js/mapcore/municipalities.js';
+    import { vacancyByMunicipality, vacancyByPrefecture, buildChoroplethConfig, createRampLegend } from '/js/mapcore/metrics.js';
+
+    const params = new URLSearchParams(location.search);
+    // 既定は API（tetsugo server がサンプル or vacant-service プロキシを返す）。
+    // 静的配信などで API が無い時は同梱サンプルへフォールバック。
+    const src = params.get('src') || '/api/address-points';
+    const fallbackSrc = '/data/sample-error-points.json';
+
+    const els = {
+      side: document.getElementById('side'),
+      canvas: document.getElementById('view'),
+      legend: document.getElementById('legend'),
+      prefList: document.getElementById('prefList'),
+      search: document.getElementById('search'),
+      status: document.getElementById('status'),
+      detail: document.getElementById('detail'),
+      loading: document.getElementById('loading'),
+      mode: document.getElementById('mode'),
+      modeNote: document.getElementById('modeNote'),
+      layerPoints: document.getElementById('layerPoints'),
+      layerGrid: document.getElementById('layerGrid'),
+      choroMode: document.getElementById('choroMode'),
+      gridDeg: document.getElementById('gridDeg'),
+      gridDegVal: document.getElementById('gridDegVal'),
+      home: document.getElementById('home'),
+    };
+
+    function webglOk() {
+      try { const c = document.createElement('canvas'); return !!(c.getContext('webgl2') || c.getContext('webgl')); }
+      catch (_) { return false; }
+    }
+
+    async function loadData() {
+      try {
+        const r = await fetch(src);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return await r.json();
+      } catch (e) {
+        if (src === fallbackSrc) throw e;
+        const r = await fetch(fallbackSrc);
+        return await r.json();
+      }
+    }
+    const data = await loadData();
+    const model = createMapModel(data);
+    // 都道府県ポリゴン索引（小さいので即ロード）。市区町村/空き家率は選択時に遅延ロード。
+    let prefIndex = null;
+    try {
+      prefIndex = createPrefectureIndex(await fetch('/data/japan-prefectures.json').then((r) => r.json()));
+    } catch (_) { /* 取得失敗時はコロプレス無効 */ }
+    const choroCtx = { prefIndex, muniIndex: null, vacancyMuni: null, vacancyPref: null };
+    let estatCache = null;
+    async function ensureEstat() {
+      if (!estatCache) estatCache = await fetch('/data/estat-vacancy.json').then((r) => r.json());
+      return estatCache;
+    }
+    async function ensureFor(mode) {
+      if ((mode === 'muni-errors' || mode === 'muni-vacancy') && !choroCtx.muniIndex) {
+        choroCtx.muniIndex = createMunicipalityIndex(await fetch('/data/japan-municipalities.json').then((r) => r.json()));
+      }
+      if (mode === 'muni-vacancy' && !choroCtx.vacancyMuni) choroCtx.vacancyMuni = vacancyByMunicipality(await ensureEstat());
+      if (mode === 'pref-vacancy' && !choroCtx.vacancyPref) choroCtx.vacancyPref = vacancyByPrefecture(await ensureEstat());
+    }
+    async function applyChoro() {
+      if (!renderer || typeof renderer.setChoropleth !== 'function') return;
+      const mode = els.choroMode.value;
+      els.loading.classList.remove('hidden');
+      try { await ensureFor(mode); } catch (_) { /* 取得失敗時はオフ相当 */ }
+      els.loading.classList.add('hidden');
+      const cfg = buildChoroplethConfig(mode, choroCtx);
+      renderer.setChoropleth(cfg);
+      renderer.setLayers({ choropleth: mode !== 'off' });
+      const legend = document.getElementById('choroLegend');
+      legend.innerHTML = '';
+      if (cfg && cfg.kind === 'metric') legend.appendChild(createRampLegend(document, { max: cfg.max, label: '空き家率' }));
+    }
+    let renderer = null;
+    // WebGL 自動判定（?mode= で上書き可）。非対応機は 2D。
+    let mode = params.get('mode') || (webglOk() ? '3d' : '2d');
+
+    function onPick(point, screen) {
+      if (!point) { els.detail.style.display = 'none'; return; }
+      const props = point.props || {};
+      const kv = Object.entries(props).map(([k, v]) => `<div class="kv"><span class="k">${k}</span><span>${v}</span></div>`).join('');
+      els.detail.innerHTML = `<span class="close">✕</span>
+        <h3><span class="legend-dot" style="display:inline-block;background:${model.colorOf(point.category)}"></span> ${model.labelOf(point.category)}</h3>
+        <div class="kv"><span class="k">label</span><span>${point.label || ''}</span></div>
+        <div class="kv"><span class="k">lat,lon</span><span>${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}</span></div>
+        ${kv}`;
+      els.detail.querySelector('.close').onclick = () => { els.detail.style.display = 'none'; };
+      const mainRect = document.getElementById('main').getBoundingClientRect();
+      const x = (screen ? screen.x : mainRect.left + 40) - mainRect.left;
+      const y = (screen ? screen.y : mainRect.top + 40) - mainRect.top;
+      els.detail.style.left = Math.min(x + 12, mainRect.width - 330) + 'px';
+      els.detail.style.top = Math.min(y + 12, mainRect.height - 200) + 'px';
+      els.detail.style.display = 'block';
+    }
+
+    async function buildRenderer() {
+      if (renderer) { renderer.destroy(); renderer = null; }
+      els.detail.style.display = 'none';
+      const layers = { points: els.layerPoints.checked, grid: els.layerGrid.checked };
+      const gridDeg = parseFloat(els.gridDeg.value);
+      els.loading.classList.remove('hidden');
+      try {
+        if (mode === '3d') {
+          try {
+            const { createRenderer3D } = await import('/js/mapcore/renderer-3d.js');
+            renderer = await createRenderer3D(els.canvas, { model, onPick, layers, gridDeg, terrainName: 'japan' });
+            els.modeNote.textContent = '3D（点+グリッド柱）。ドラッグ回転・ホイールズーム・点クリックで詳細。コロプレスは2Dのみ';
+          } catch (e) {
+            // terrain 資産(/js/terrain3d.js + /terrain/)が無いホストでは 2D に戻す
+            mode = '2d';
+            const { createRenderer2D } = await import('/js/mapcore/renderer-2d.js');
+            renderer = createRenderer2D(els.canvas, { model, onPick, layers, gridDeg });
+            els.modeNote.textContent = '3D はホスト側の terrain 資産が必要（tetsugo では有効）。2D にフォールバックした';
+          }
+        } else {
+          const { createRenderer2D } = await import('/js/mapcore/renderer-2d.js');
+          renderer = createRenderer2D(els.canvas, { model, onPick, layers, gridDeg });
+          els.modeNote.textContent = 'ドラッグでパン・ホイールズーム・点クリックで詳細';
+        }
+      } finally {
+        els.loading.classList.add('hidden');
+      }
+      await applyChoro();
+      updateStatus();
+      syncModeButtons();
+    }
+
+    function updateStatus() {
+      const vis = model.visible().length;
+      els.status.textContent = `表示 ${vis} / 全 ${model.points.length} 点 — ${mode.toUpperCase()}`;
+    }
+    function syncModeButtons() {
+      for (const b of els.mode.querySelectorAll('button')) b.classList.toggle('active', b.dataset.mode === mode);
+    }
+
+    // --- legend (category toggles) ---
+    function buildLegend() {
+      const counts = model.counts();
+      els.legend.innerHTML = '';
+      for (const c of model.categories) {
+        const wrap = document.createElement('label');
+        wrap.className = 'row chk';
+        wrap.innerHTML = `<input type="checkbox" ${model.filter.categories.has(c.key) ? 'checked' : ''}>
+          <span class="legend-dot" style="background:${c.color}"></span>${c.label}
+          <span class="count">${counts[c.key] || 0}</span>`;
+        wrap.querySelector('input').onchange = (e) => {
+          if (e.target.checked) model.filter.categories.add(c.key); else model.filter.categories.delete(c.key);
+          renderer && renderer.refresh(); updateStatus();
+        };
+        els.legend.appendChild(wrap);
+      }
+    }
+
+    // --- prefecture list ---
+    function buildPrefs() {
+      els.prefList.innerHTML = '';
+      for (const pref of model.prefs) {
+        const wrap = document.createElement('label');
+        wrap.className = 'chk';
+        wrap.style.fontSize = '12px';
+        wrap.innerHTML = `<input type="checkbox" ${model.filter.prefs.has(pref) ? 'checked' : ''}> ${pref}`;
+        wrap.querySelector('input').onchange = (e) => {
+          if (e.target.checked) model.filter.prefs.add(pref); else model.filter.prefs.delete(pref);
+          renderer && renderer.refresh(); updateStatus();
+        };
+        els.prefList.appendChild(wrap);
+      }
+    }
+
+    // --- wires ---
+    els.mode.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => { if (mode !== b.dataset.mode) { mode = b.dataset.mode; buildRenderer(); } };
+    });
+    els.layerPoints.onchange = () => renderer && renderer.setLayers({ points: els.layerPoints.checked });
+    els.layerGrid.onchange = () => renderer && renderer.setLayers({ grid: els.layerGrid.checked });
+    els.choroMode.onchange = () => applyChoro();
+    els.gridDeg.oninput = () => { els.gridDegVal.textContent = els.gridDeg.value + '°'; renderer && renderer.setGridDeg(parseFloat(els.gridDeg.value)); };
+    els.search.oninput = () => { model.filter.query = els.search.value; renderer && renderer.refresh(); updateStatus(); };
+    els.home.onclick = () => renderer && renderer.home();
+    document.getElementById('prefAll').onclick = () => { model.prefs.forEach((p) => model.filter.prefs.add(p)); buildPrefs(); renderer && renderer.refresh(); updateStatus(); };
+    document.getElementById('prefNone').onclick = () => { model.filter.prefs.clear(); buildPrefs(); renderer && renderer.refresh(); updateStatus(); };
+
+    buildLegend();
+    buildPrefs();
+    await buildRenderer();
+    window.__map = { model, get renderer() { return renderer; } }; // for headless 検証
+  </script>
+</body>
+</html>

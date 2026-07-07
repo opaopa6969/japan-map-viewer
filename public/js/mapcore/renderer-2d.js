@@ -2,14 +2,23 @@
 // 合成済み日本地図 PNG(basemap) を背景に、緯度経度→ピクセル(mercatorXY)で点と
 // グリッドコロプレスを描く。任意の canvas(=任意 rect) に描けるので、フルスクリーン
 // でも OpaDeck パネル内でも同じコードで動く。
+//
+// issue #1: 汎用レイヤーAPI(addLayer 等)対応。extrusion は 2D では柱にできないため
+// 「値→円の半径+色」のフォールバック描画。movers はレイヤーがある間だけ rAF ループ。
 import { BASEMAP, mercatorXY } from '/js/basemap.js';
 import { rampColor } from './metrics.js';
+import {
+  LAYER_TYPES, createLayerRegistry, moverPosition, hasActiveMovers, realClock,
+} from './layers.js';
+import { createWipe } from './fx.js';
 
 export function createRenderer2D(canvas, opts = {}) {
   const model = opts.model;
   const onPick = opts.onPick;
+  const clock = opts.clock || realClock();
   const ctx = canvas.getContext('2d');
   const layers = { points: true, grid: false, choropleth: false, ...(opts.layers || {}) };
+  const registry = createLayerRegistry();
   let gridDeg = opts.gridDeg || 0.5;
   // choropleth 設定: { index, kind:'errors'|'metric', values?:Map(id->number), max?:number }
   let choro = opts.choropleth || (opts.prefIndex ? { index: opts.prefIndex, kind: 'errors' } : null);
@@ -163,12 +172,96 @@ export function createRenderer2D(canvas, opts = {}) {
     ctx.restore();
   }
 
+  // --- 汎用レイヤー(network/extrusion/markers/movers) --------------------------
+  function drawCustomLayers() {
+    const r = pxRatio();
+    const tNow = clock.now();
+    for (const spec of registry.list()) {
+      if (!spec.visible) continue;
+      const st = spec.style;
+      ctx.save();
+      if (spec.type === 'network') {
+        const nodeById = new Map(spec.data.nodes.map((n) => [n.id, n]));
+        ctx.strokeStyle = st.edgeColor || 'rgba(122,138,160,0.8)';
+        ctx.lineWidth = (st.edgeWidth ?? 1.5) * r;
+        ctx.beginPath();
+        for (const e of spec.data.edges) {
+          const a = nodeById.get(e.from);
+          const b = nodeById.get(e.to);
+          if (!a || !b) continue;
+          const [ax, ay] = llToScreen(a.lat, a.lon);
+          const [bx, by] = llToScreen(b.lat, b.lon);
+          ctx.moveTo(ax, ay);
+          ctx.lineTo(bx, by);
+        }
+        ctx.stroke();
+        ctx.fillStyle = st.nodeColor || '#e8c468';
+        for (const n of spec.data.nodes) {
+          const [x, y] = llToScreen(n.lat, n.lon);
+          ctx.beginPath();
+          ctx.arc(x, y, (st.nodeRadius ?? 3.5) * r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      } else if (spec.type === 'extrusion') {
+        // 2Dフォールバック: 値→半径+ランプ色の円(柱は描けない)
+        const maxV = spec.data.points.reduce((m, p) => Math.max(m, p.value || 0), 0) || 1;
+        for (const p of spec.data.points) {
+          const [x, y] = llToScreen(p.lat, p.lon);
+          const t = (p.value || 0) / maxV;
+          ctx.beginPath();
+          ctx.arc(x, y, (4 + 14 * Math.sqrt(t)) * r, 0, Math.PI * 2);
+          ctx.fillStyle = p.color || st.color || rampColor(t);
+          ctx.globalAlpha = 0.75;
+          ctx.fill();
+        }
+      } else if (spec.type === 'markers') {
+        ctx.font = `${(st.iconSize ?? 18) * r}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const p of spec.data.points) {
+          const [x, y] = llToScreen(p.lat, p.lon);
+          ctx.fillText(p.icon || '📍', x, y);
+          if (p.label && st.showLabels !== false) {
+            ctx.font = `${11 * r}px sans-serif`;
+            ctx.fillStyle = 'rgba(230,232,235,0.9)';
+            ctx.fillText(p.label, x, y + (st.iconSize ?? 18) * r * 0.9);
+            ctx.font = `${(st.iconSize ?? 18) * r}px sans-serif`;
+          }
+        }
+      } else if (spec.type === 'movers') {
+        ctx.font = `${(st.iconSize ?? 20) * r}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const tk of spec.data.tokens) {
+          const pos = moverPosition(tk, tNow);
+          const [x, y] = llToScreen(pos.lat, pos.lon);
+          ctx.fillText(tk.icon || '🚄', x, y);
+        }
+      }
+      ctx.restore();
+    }
+  }
+
   function draw() {
     clear();
     drawBasemap();
     if (layers.choropleth) drawChoropleth();
     if (layers.grid) drawGrid();
     if (layers.points) drawPoints();
+    drawCustomLayers();
+  }
+
+  // movers がある間だけ rAF ループを回す(静的レイヤーだけなら消費ゼロのまま)
+  let rafId = null;
+  function maintainLoop() {
+    const need = hasActiveMovers(registry);
+    if (need && rafId == null) {
+      const loop = () => { draw(); rafId = requestAnimationFrame(loop); };
+      rafId = requestAnimationFrame(loop);
+    } else if (!need && rafId != null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
   }
 
   // --- pick: 画面座標に最も近い可視点（半径内）を返す ---
@@ -205,9 +298,37 @@ export function createRenderer2D(canvas, opts = {}) {
     lastX = e.clientX; lastY = e.clientY;
     draw();
   }
+  // pickable な汎用レイヤーの近傍ヒット(markers/networkノード/extrusion)。
+  function pickCustom(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const r = pxRatio();
+    const px = (clientX - rect.left) * r;
+    const py = (clientY - rect.top) * r;
+    const maxD = (12 * r) ** 2;
+    // 上のレイヤー(list末尾)から優先で当てる
+    for (const spec of [...registry.list()].reverse()) {
+      if (!spec.visible || !spec.pickable || !spec.onPick) continue;
+      const candidates = spec.type === 'network' ? spec.data.nodes
+        : (spec.type === 'markers' || spec.type === 'extrusion') ? spec.data.points : [];
+      for (const p of candidates) {
+        const [sx, sy] = llToScreen(p.lat, p.lon);
+        if ((sx - px) ** 2 + (sy - py) ** 2 < maxD) {
+          return { spec, feature: p };
+        }
+      }
+    }
+    return null;
+  }
+
   function onUp(e) {
     dragging = false;
-    if (!moved && onPick) {
+    if (moved) return;
+    const custom = pickCustom(e.clientX, e.clientY);
+    if (custom) {
+      custom.spec.onPick(custom.feature, { layerId: custom.spec.id, x: e.clientX, y: e.clientY });
+      return;
+    }
+    if (onPick) {
       const hit = pick(e.clientX, e.clientY);
       onPick(hit, { x: e.clientX, y: e.clientY });
     }
@@ -235,6 +356,33 @@ export function createRenderer2D(canvas, opts = {}) {
   ro.observe(canvas);
   resize();
 
+  const wipe = createWipe(canvas.parentElement || canvas);
+  if (canvas.parentElement && getComputedStyle(canvas.parentElement).position === 'static') {
+    canvas.parentElement.style.position = 'relative';
+  }
+
+  // focusOn: view の ox/oy/scale を rAF でイーズ(指定地点を canvas 中心へ)。
+  let focusRaf = null;
+  function focusOn({ lat, lon, scale, duration = 700 } = {}) {
+    if (focusRaf) { cancelAnimationFrame(focusRaf); focusRaf = null; }
+    const { x: ix, y: iy } = mercatorXY(lat, lon);   // 画像空間
+    const s1 = scale != null ? scale : view.scale;
+    const from = { scale: view.scale, ox: view.ox, oy: view.oy };
+    const to = { scale: s1, ox: canvas.width / 2 - ix * s1, oy: canvas.height / 2 - iy * s1 };
+    const start = performance.now();
+    function frame(now) {
+      const u = Math.min(1, (now - start) / duration);
+      const e = u * u * (3 - 2 * u); // smoothstep
+      view.scale = from.scale + (to.scale - from.scale) * e;
+      view.ox = from.ox + (to.ox - from.ox) * e;
+      view.oy = from.oy + (to.oy - from.oy) * e;
+      draw();
+      if (u < 1) focusRaf = requestAnimationFrame(frame);
+      else focusRaf = null;
+    }
+    focusRaf = requestAnimationFrame(frame);
+  }
+
   return {
     kind: '2d',
     // データ/フィルタ変更時の再描画。コロプレスキャッシュも作り直す。
@@ -244,8 +392,35 @@ export function createRenderer2D(canvas, opts = {}) {
     setGridDeg(d) { gridDeg = d; draw(); },
     setChoropleth(config) { choro = config; choroCache = null; draw(); },
     home() { fit(); draw(); },
+
+    // --- 汎用レイヤーAPI(issue #1) ---
+    addLayer(spec) { const s = registry.add(spec); maintainLoop(); draw(); return s; },
+    removeLayer(id) { const r = registry.remove(id); maintainLoop(); draw(); return r; },
+    setLayerVisible(id, v) { const r = registry.setVisible(id, v); maintainLoop(); draw(); return r; },
+    updateLayerData(id, data) { const r = registry.updateData(id, data); maintainLoop(); draw(); return r; },
+    reorderLayers(ids) { registry.reorder(ids); draw(); },
+    supportsLayerType(t) { return LAYER_TYPES.includes(t); },
+    getLayers() { return registry.toJSON(); },
+
+    // --- カメラ演出・表示モード ---
+    projectToScreen(lat, lon) {
+      const [x, y] = llToScreen(lat, lon);
+      const r = pxRatio();
+      return { x: x / r, y: y / r };   // CSSピクセルで返す(deck/3dと揃える)
+    },
+    focusOn,
+    wipe,
+    setViewMode() { /* 2D は north-up 固定 */ },
+    supportsViewMode(m) { return m === 'north-up'; },
+    addInset() { throw new Error('renderer-2d は inset 未対応(renderer-deck を使う)'); },
+    removeInset() { return false; },
+    maxInsets() { return 0; },
+
     destroy() {
       ro.disconnect();
+      if (rafId != null) cancelAnimationFrame(rafId);
+      if (focusRaf) cancelAnimationFrame(focusRaf);
+      wipe.destroy();
       canvas.removeEventListener('pointerdown', onDown);
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);

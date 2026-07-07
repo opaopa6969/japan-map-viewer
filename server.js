@@ -33,6 +33,7 @@ const ALIASES = {
   '/address-map-gl': '/address-map-gl.html',
   '/municipality-map': '/municipality-map.html',
   '/municipality-timeline': '/municipality-timeline.html',
+  '/layers-demo': '/layers-demo.html',
 };
 
 async function serveAddressPoints(req, res) {

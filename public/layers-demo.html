@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>japan-map-viewer — レイヤー/演出デモ</title>
+
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/deck.gl@9.0.36/dist.min.js"></script>
+
+<style>
+  :root { color-scheme: dark; --bg:#0e1116; --panel:#1a1f29; --border:#2c3340;
+          --text:#dce1e8; --muted:#8b93a1; --accent:#4e79a7; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 280px 1fr; height: 100%; }
+  #side { background: var(--panel); border-right: 1px solid var(--border); overflow-y: auto; padding: 12px; }
+  #side h1 { font-size: 15px; margin: 0 0 2px; }
+  #side .sub { font-size: 11px; color: var(--muted); margin: 0 0 12px; line-height: 1.5; }
+  .group { margin-bottom: 16px; }
+  .group > h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
+  .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .btn { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 8px; cursor: pointer; font: inherit; font-size: 12px; margin-bottom: 6px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn.active { background: var(--accent); color: #fff; }
+  #main { position: relative; }
+  #map { position: absolute; inset: 0; }
+  #popup { position: absolute; z-index: 25; background: rgba(16,20,28,.95);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 12px; max-width: 280px;
+    display: none; line-height: 1.6; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  #popup b { color: var(--text); font-size: 13px; }
+  #popup .k { color: var(--muted); }
+  #popup .close { position: absolute; top: 4px; right: 8px; cursor: pointer; color: var(--muted); }
+  a.back { color: var(--muted); font-size: 12px; text-decoration: none; }
+  a.back:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="side">
+    <h1>🗾 レイヤー/演出デモ</h1>
+    <p class="sub">issue #1 の汎用レイヤーAPI: network(路線)・movers(電車)・extrusion(人口柱)・
+      markers(名所)・PiP・focusOn・wipe・heading-up。<br><a class="back" href="/">← 一覧へ</a></p>
+
+    <div class="group">
+      <h2>レイヤー (addLayer / setLayerVisible)</h2>
+      <label class="chk row"><input type="checkbox" id="ly-rail" checked> 🛤 路線ネットワーク (network)</label>
+      <label class="chk row"><input type="checkbox" id="ly-train" checked> 🚄 電車 (movers)</label>
+      <label class="chk row"><input type="checkbox" id="ly-pop" checked> 🏙 人口柱 (extrusion)</label>
+      <label class="chk row"><input type="checkbox" id="ly-poi"> 📍 名所 (markers)</label>
+    </div>
+
+    <div class="group">
+      <h2>カメラ・演出</h2>
+      <button class="btn" id="focus-tokyo">🎯 focusOn: 東京</button>
+      <button class="btn" id="focus-osaka">🎯 focusOn: 大阪</button>
+      <button class="btn" id="wipe-btn">🌀 wipe(円形・東京中心)</button>
+      <button class="btn" id="mode-heading">🧭 heading-up (電車追従)</button>
+      <button class="btn" id="mode-north">⬆ north-up に戻す</button>
+    </div>
+
+    <div class="group">
+      <h2>PiP (addInset)</h2>
+      <button class="btn" id="inset-chase">📺 追跡カメラ小窓 ON/OFF</button>
+      <button class="btn" id="inset-wide">🗾 全体図小窓 ON/OFF</button>
+    </div>
+
+    <div class="group">
+      <h2>ヒント</h2>
+      <p class="sub">駅・人口柱・名所はクリックで詳細ウィンドウが出ます(レイヤー単位の onPick)。</p>
+    </div>
+  </aside>
+  <div id="main">
+    <div id="map"></div>
+    <div id="popup"><span class="close" onclick="this.parentElement.style.display='none'">✕</span><div id="popup-body"></div></div>
+  </div>
+</div>
+
+<script type="module">
+import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
+
+const $ = (id) => document.getElementById(id);
+
+// --- デモデータ: 主要都市(人口: 2020年国勢調査の概数・万人) --------------------
+const CITIES = [
+  { id: 'sapporo',  label: '札幌',   lat: 43.0618, lon: 141.3545, pop: 197 },
+  { id: 'sendai',   label: '仙台',   lat: 38.2682, lon: 140.8694, pop: 110 },
+  { id: 'niigata',  label: '新潟',   lat: 37.9161, lon: 139.0364, pop: 79 },
+  { id: 'tokyo',    label: '東京',   lat: 35.6812, lon: 139.7671, pop: 1396 },
+  { id: 'yokohama', label: '横浜',   lat: 35.4437, lon: 139.6380, pop: 378 },
+  { id: 'nagoya',   label: '名古屋', lat: 35.1815, lon: 136.9066, pop: 233 },
+  { id: 'kanazawa', label: '金沢',   lat: 36.5613, lon: 136.6562, pop: 46 },
+  { id: 'kyoto',    label: '京都',   lat: 34.9859, lon: 135.7585, pop: 146 },
+  { id: 'osaka',    label: '大阪',   lat: 34.7025, lon: 135.4959, pop: 275 },
+  { id: 'kobe',     label: '神戸',   lat: 34.6913, lon: 135.1830, pop: 152 },
+  { id: 'hiroshima',label: '広島',   lat: 34.3853, lon: 132.4553, pop: 120 },
+  { id: 'fukuoka',  label: '福岡',   lat: 33.5902, lon: 130.4017, pop: 161 },
+];
+const cityById = Object.fromEntries(CITIES.map((c) => [c.id, c]));
+
+// 幹線っぽい接続(東海道・山陽・東北・北陸)
+const EDGES = [
+  ['sapporo', 'sendai'], ['sendai', 'tokyo'], ['niigata', 'tokyo'],
+  ['tokyo', 'yokohama'], ['yokohama', 'nagoya'], ['nagoya', 'kyoto'],
+  ['kyoto', 'osaka'], ['osaka', 'kobe'], ['kobe', 'hiroshima'], ['hiroshima', 'fukuoka'],
+  ['kanazawa', 'kyoto'], ['niigata', 'kanazawa'],
+].map(([from, to]) => ({ from, to }));
+
+// 電車ルート: 東京→福岡を各駅 90秒間隔で往復ループ
+const HOPS = ['tokyo', 'yokohama', 'nagoya', 'kyoto', 'osaka', 'kobe', 'hiroshima', 'fukuoka'];
+const routeThere = HOPS.map((id, i) => ({ lat: cityById[id].lat, lon: cityById[id].lon, t: i * 12 }));
+const routeBack = [...HOPS].reverse().slice(1).map((id, i) => ({ lat: cityById[id].lat, lon: cityById[id].lon, t: (HOPS.length - 1 + i + 1) * 12 }));
+const ROUTE = [...routeThere, ...routeBack];
+
+// --- 詳細ポップアップ(レイヤー単位の onPick) ----------------------------------
+function showPopup(html, xy) {
+  const el = $('popup');
+  $('popup-body').innerHTML = html;
+  el.style.display = 'block';
+  const main = $('main').getBoundingClientRect();
+  el.style.left = Math.min(xy.x + 14, main.width - 300) + 'px';
+  el.style.top = Math.min(xy.y + 14, main.height - 140) + 'px';
+}
+const pickCity = (kind) => (f, info) => {
+  if (!f) return;
+  const c = cityById[f.id] || f;
+  showPopup(`<b>${c.label || f.id}</b><br>
+    <span class="k">レイヤー:</span> ${info.layerId} (${kind})<br>
+    <span class="k">座標:</span> ${(f.lat ?? c.lat).toFixed(3)}, ${(f.lon ?? c.lon).toFixed(3)}<br>
+    ${c.pop ? `<span class="k">人口:</span> 約${c.pop}万人` : ''}`, info);
+};
+
+// --- レンダラ生成(model無し=レイヤー専用利用の実証) -----------------------------
+const renderer = createRendererDeck($('map'), {
+  initialView: { center: [137.0, 36.5], zoom: 5.0, pitch: 40 },
+});
+
+renderer.addLayer({
+  id: 'rail', type: 'network', zIndex: 1,
+  data: { nodes: CITIES.map((c) => ({ ...c })), edges: EDGES },
+  style: { edgeColor: '#5a8ac0', edgeWidth: 2, nodeColor: '#e8c468', nodeRadius: 4, showLabels: true },
+  pickable: true, onPick: pickCity('駅'),
+});
+renderer.addLayer({
+  id: 'pop', type: 'extrusion', zIndex: 0,
+  data: { points: CITIES.map((c) => ({ id: c.id, label: c.label, lat: c.lat, lon: c.lon, value: c.pop })) },
+  style: { heightScale: 400, radius: 9000 },
+  pickable: true, onPick: pickCity('人口'),
+});
+renderer.addLayer({
+  id: 'train', type: 'movers', zIndex: 10,
+  data: { tokens: [{ id: 'train-1', route: ROUTE, icon: '🚄', loop: true }] },
+  style: { iconSize: 26 },
+});
+renderer.addLayer({
+  id: 'poi', type: 'markers', zIndex: 5, visible: false,
+  data: { points: [
+    { id: 'fuji', lat: 35.3606, lon: 138.7274, icon: '🗻', label: '富士山' },
+    { id: 'ise', lat: 34.4550, lon: 136.7256, icon: '⛩', label: '伊勢神宮' },
+    { id: 'himeji', lat: 34.8394, lon: 134.6939, icon: '🏯', label: '姫路城' },
+  ] },
+  pickable: true, onPick: pickCity('名所'),
+});
+
+// --- UI 配線 -------------------------------------------------------------------
+const toggles = { 'ly-rail': 'rail', 'ly-train': 'train', 'ly-pop': 'pop', 'ly-poi': 'poi' };
+for (const [chk, layer] of Object.entries(toggles)) {
+  $(chk).addEventListener('change', (e) => renderer.setLayerVisible(layer, e.target.checked));
+}
+
+$('focus-tokyo').onclick = () => renderer.focusOn({ lat: 35.6812, lon: 139.7671, zoom: 9, pitch: 50, duration: 1200 });
+$('focus-osaka').onclick = () => renderer.focusOn({ lat: 34.7025, lon: 135.4959, zoom: 9, pitch: 50, duration: 1200 });
+$('wipe-btn').onclick = () => {
+  const p = renderer.projectToScreen(35.6812, 139.7671);
+  const rect = $('map').getBoundingClientRect();
+  renderer.wipe({
+    type: 'circle', direction: 'inout', duration: 1100,
+    center: { x: p.x / rect.width, y: p.y / rect.height },
+    onMid: () => renderer.focusOn({ lat: 35.6812, lon: 139.7671, zoom: 9, duration: 0 }),
+  });
+};
+$('mode-heading').onclick = (e) => {
+  renderer.setViewMode('heading-up', { track: 'train-1' });
+  renderer.focusOn({ zoom: 8, pitch: 55, duration: 600 });
+  e.target.classList.add('active'); $('mode-north').classList.remove('active');
+};
+$('mode-north').onclick = (e) => {
+  renderer.setViewMode('north-up');
+  e.target.classList.add('active'); $('mode-heading').classList.remove('active');
+};
+
+let chaseOn = false;
+$('inset-chase').onclick = (e) => {
+  chaseOn = !chaseOn;
+  e.target.classList.toggle('active', chaseOn);
+  if (chaseOn) {
+    renderer.addInset({
+      id: 'chase', rect: { x: 0.70, y: 0.03, w: 0.27, h: 0.30 },
+      camera: { track: 'train-1', zoom: 8.5 }, viewMode: 'heading-up',
+    });
+  } else renderer.removeInset('chase');
+};
+let wideOn = false;
+$('inset-wide').onclick = (e) => {
+  wideOn = !wideOn;
+  e.target.classList.toggle('active', wideOn);
+  if (wideOn) {
+    renderer.addInset({
+      id: 'wide', rect: { x: 0.02, y: 0.66, w: 0.24, h: 0.31 },
+      camera: { lat: 36.5, lon: 137.0, zoom: 3.6 },
+    });
+  } else renderer.removeInset('wide');
+};
+</script>
+</body>
+</html>

@@ -238,11 +238,11 @@
             renderer = await createRenderer3D(els.canvas, { model, onPick, layers, gridDeg, terrainName: 'japan' });
             els.modeNote.textContent = '3D（点+グリッド柱）。ドラッグ回転・ホイールズーム・点クリックで詳細。コロプレスは2Dのみ';
           } catch (e) {
-            // terrain 資産(/js/terrain3d.js + /terrain/)が無いホストでは 2D に戻す
+            // terrain 資産(/js/terrain3d.js + /terrain/)読み込み失敗時は 2D に戻す
             mode = '2d';
             const { createRenderer2D } = await import('/js/mapcore/renderer-2d.js');
             renderer = createRenderer2D(els.canvas, { model, onPick, layers, gridDeg });
-            els.modeNote.textContent = '3D はホスト側の terrain 資産が必要（tetsugo では有効）。2D にフォールバックした';
+            els.modeNote.textContent = '3D の読み込みに失敗したため 2D にフォールバックした';
           }
         } else {
           const { createRenderer2D } = await import('/js/mapcore/renderer-2d.js');

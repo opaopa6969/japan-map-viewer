@@ -8,6 +8,7 @@
     "fetch:map": "node scripts/fetch-map-data.mjs && node scripts/fetch-land-prices.mjs",
     "fetch:basemap": "node scripts/fetch-basemap.mjs",
     "fetch:vacancy": "node scripts/fetch-estat-vacancy.mjs",
+    "fetch:terrain": "node scripts/fetch-terrain.mjs",
     "build:changes": "node scripts/build-municipality-changes.mjs",
     "build:sample-points": "node scripts/build-sample-error-points.mjs"
   },

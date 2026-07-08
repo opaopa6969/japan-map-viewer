@@ -21,13 +21,16 @@
 //
 // type別 data:
 //   network:   { nodes: [{id, lat, lon, kind?, label?}], edges: [{from, to, kind?}] }
+//   paths:     { paths: [{id, coords: [[lon, lat], ...], name?, kind?, color?}] }
+//              実世界のポリライン(鉄道路線・道路・河川等)。network(グラフ)と違い
+//              ノード共有を持たない「線の束」。kind/color でスタイル出し分け
 //   extrusion: { points: [{id, lat, lon, value, category?, label?}] }
 //              style: { heightScale?, radius?, color? }
 //   movers:    { tokens: [{id, route: [{lat, lon, t}], icon?, label?, loop?}] }
 //              t は clock.now() と同じ秒単位。loop=true でルート総時間で周回
 //   markers:   { points: [{id, lat, lon, icon?, label?, color?}] }
 
-export const LAYER_TYPES = ['network', 'extrusion', 'movers', 'markers'];
+export const LAYER_TYPES = ['network', 'paths', 'extrusion', 'movers', 'markers'];
 
 /** 既定の実時計(秒)。レンダラ生成時に opts.clock で差し替え可能(fake clockで決定論テスト)。 */
 export function realClock() {
@@ -44,6 +47,11 @@ export function validateLayerSpec(spec) {
   const d = spec.data || {};
   if (spec.type === 'network') {
     if (!Array.isArray(d.nodes) || !Array.isArray(d.edges)) throw new Error('network は data.nodes[]/data.edges[] が必要');
+  } else if (spec.type === 'paths') {
+    if (!Array.isArray(d.paths)) throw new Error('paths は data.paths[] が必要');
+    for (const p of d.paths) {
+      if (!Array.isArray(p.coords) || p.coords.length < 2) throw new Error(`paths ${p.id}: coords[[lon,lat],...] (2点以上) が必要`);
+    }
   } else if (spec.type === 'extrusion') {
     if (!Array.isArray(d.points)) throw new Error('extrusion は data.points[] が必要');
   } else if (spec.type === 'movers') {

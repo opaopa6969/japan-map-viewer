@@ -180,7 +180,20 @@ export function createRenderer2D(canvas, opts = {}) {
       if (!spec.visible) continue;
       const st = spec.style;
       ctx.save();
-      if (spec.type === 'network') {
+      if (spec.type === 'paths') {
+        ctx.lineWidth = (st.width ?? 1.5) * r;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        for (const path of spec.data.paths) {
+          ctx.strokeStyle = path.color || st.color || 'rgba(122,138,160,0.8)';
+          ctx.beginPath();
+          path.coords.forEach(([lon, lat], i) => {
+            const [x, y] = llToScreen(lat, lon);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.stroke();
+        }
+      } else if (spec.type === 'network') {
         const nodeById = new Map(spec.data.nodes.map((n) => [n.id, n]));
         ctx.strokeStyle = st.edgeColor || 'rgba(122,138,160,0.8)';
         ctx.lineWidth = (st.edgeWidth ?? 1.5) * r;

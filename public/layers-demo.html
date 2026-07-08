@@ -55,6 +55,13 @@
     </div>
 
     <div class="group">
+      <h2>実データ (国土数値情報 N02)</h2>
+      <label class="chk row"><input type="checkbox" id="ly-realrail"> 🛤 実路線・全国 (paths / 約10MB)</label>
+      <button class="btn" id="shinkansen">🚅 東海道新幹線を実線路で走らせる</button>
+      <p class="sub">路線クリックで路線名/会社。データは /api/railways/… でも検索可</p>
+    </div>
+
+    <div class="group">
       <h2>カメラ・演出</h2>
       <button class="btn" id="focus-tokyo">🎯 focusOn: 東京</button>
       <button class="btn" id="focus-osaka">🎯 focusOn: 大阪</button>
@@ -214,6 +221,108 @@ $('inset-wide').onclick = (e) => {
       camera: { lat: 36.5, lon: 137.0, zoom: 3.6 },
     });
   } else renderer.removeInset('wide');
+};
+
+// --- 実データ(N02): 全国の実路線 paths + 実線路を走る新幹線 -----------------------
+const KIND_COLORS = { 1: '#e15759', 2: '#6b87a8', 3: '#59a14f', 4: '#e8a13c', 5: '#af7aa1' };
+let railData = null;
+async function ensureRail() {
+  if (!railData) railData = await (await fetch('/data/japan-railways.json')).json();
+  return railData;
+}
+
+$('ly-realrail').addEventListener('change', async (e) => {
+  if (e.target.checked && !renderer.getLayers().some((l) => l.id === 'realrail')) {
+    const rail = await ensureRail();
+    renderer.addLayer({
+      id: 'realrail', type: 'paths', zIndex: 2,
+      data: { paths: rail.lines.map((l) => ({
+        id: l.id, coords: l.coords, name: l.name, company: l.company,
+        color: KIND_COLORS[l.kind] || '#7a8aa0',
+      })) },
+      style: { width: 1.2, opacity: 170 },
+      pickable: true,
+      onPick: (f, info) => f && showPopup(
+        `<b>${f.name}</b><br><span class="k">会社:</span> ${f.company}`, info),
+    });
+  } else {
+    renderer.setLayerVisible('realrail', e.target.checked);
+  }
+});
+
+// 区間(LineString断片)を端点マッチで1本に繋ぐ(貪欲・許容≈300m)
+function stitch(segs) {
+  const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+  const TOKYO = [139.7671, 35.6812];
+  const used = new Set();
+  let bi = 0;
+  let brev = false;
+  let bd = Infinity;
+  segs.forEach((s, i) => {
+    if (d2(s[0], TOKYO) < bd) { bd = d2(s[0], TOKYO); bi = i; brev = false; }
+    if (d2(s[s.length - 1], TOKYO) < bd) { bd = d2(s[s.length - 1], TOKYO); bi = i; brev = true; }
+  });
+  let chain = brev ? [...segs[bi]].reverse() : [...segs[bi]];
+  used.add(bi);
+  for (;;) {
+    const end = chain[chain.length - 1];
+    let found = -1;
+    let frev = false;
+    let fd = 9e-6;   // ≈300m^2(度)
+    segs.forEach((s, i) => {
+      if (used.has(i)) return;
+      if (d2(s[0], end) < fd) { fd = d2(s[0], end); found = i; frev = false; }
+      if (d2(s[s.length - 1], end) < fd) { fd = d2(s[s.length - 1], end); found = i; frev = true; }
+    });
+    if (found < 0) break;
+    used.add(found);
+    const seg = frev ? [...segs[found]].reverse() : segs[found];
+    chain = chain.concat(seg.slice(1));
+  }
+  return chain;
+}
+
+// ポリライン全長を totalSec 秒で走る等速ルートを作る(movers の route 形式)
+function routeAlong(chain, totalSec) {
+  const k = Math.cos(35 * Math.PI / 180);
+  const dist = [0];
+  for (let i = 1; i < chain.length; i++) {
+    dist.push(dist[i - 1] + Math.hypot((chain[i][0] - chain[i - 1][0]) * k, chain[i][1] - chain[i - 1][1]));
+  }
+  const total = dist[dist.length - 1] || 1;
+  return chain.map((c, i) => ({ lon: c[0], lat: c[1], t: (dist[i] / total) * totalSec }));
+}
+
+let shinkOn = false;
+$('shinkansen').onclick = async (e) => {
+  shinkOn = !shinkOn;
+  e.target.classList.toggle('active', shinkOn);
+  if (!shinkOn) {
+    renderer.removeLayer('shink-path');
+    renderer.removeLayer('shink');
+    return;
+  }
+  // メタデータAPIで東海道新幹線のジオメトリ+駅を引く
+  const line = await (await fetch('/api/railways/line?name=' + encodeURIComponent('東海道新幹線'))).json();
+  const chain = stitch(line.sections.map((s) => s.coords));
+  renderer.addLayer({
+    id: 'shink-path', type: 'paths', zIndex: 3,
+    data: { paths: [{ id: 'tokaido', coords: chain, color: '#e15759', name: '東海道新幹線' }] },
+    style: { width: 3 },
+  });
+  renderer.addLayer({
+    id: 'shink', type: 'movers', zIndex: 11,
+    data: { tokens: [{ id: 'shinkansen', route: routeAlong(chain, 60), icon: '🚅', loop: true }] },
+    style: { iconSize: 28 },
+  });
+  renderer.addLayer({
+    id: 'shink-sta', type: 'markers', zIndex: 4,
+    data: { points: line.stations.map((s) => ({ id: s.id, lat: s.lat, lon: s.lon, icon: '🚉', label: s.name })) },
+    style: { iconSize: 14, labelSize: 10 },
+    pickable: true,
+    onPick: (f, info) => f && showPopup(`<b>${f.label}</b><br><span class="k">東海道新幹線</span>`, info),
+  });
+  renderer.focusOn({ lat: 35.2, lon: 137.5, zoom: 6.8, pitch: 45, duration: 1200 });
 };
 </script>
 </body>

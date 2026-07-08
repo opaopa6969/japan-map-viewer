@@ -16,6 +16,14 @@ const ok = (c, label) => { assert.ok(c, label); pass++; console.log('ok   ' + la
   ok(s.visible === true && s.pickable === false, 'spec既定: visible=true / pickable=false');
 }
 
+// ----- paths型の検証 -------------------------------------------------------------
+{
+  assert.throws(() => validateLayerSpec({ id: 'p', type: 'paths', data: {} }), /paths/);
+  assert.throws(() => validateLayerSpec({ id: 'p', type: 'paths', data: { paths: [{ id: 'x', coords: [[139, 35]] }] } }), /2点以上/);
+  const s = validateLayerSpec({ id: 'p', type: 'paths', data: { paths: [{ id: 'x', coords: [[139, 35], [140, 36]] }] } });
+  ok(s.type === 'paths', 'paths型のspecが通る(coords 2点以上)');
+}
+
 // ----- registry: zIndex順・上書き・reorder・JSON往復 --------------------------------
 {
   const reg = createLayerRegistry();

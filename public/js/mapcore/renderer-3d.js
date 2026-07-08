@@ -182,7 +182,23 @@ export async function createRenderer3D(canvas, opts = {}) {
     for (const spec of registry.list()) {
       if (!spec.visible || spec.type === 'movers') continue;
       const st = spec.style;
-      if (spec.type === 'network') {
+      if (spec.type === 'paths') {
+        for (const path of spec.data.paths) {
+          const verts = [];
+          let prev = null;
+          for (const [lon, lat] of path.coords) {
+            const w = toGround(lat, lon, 0.8);
+            if (!w) { prev = null; continue; }
+            if (prev) verts.push(prev.x, prev.y, prev.z, w.x, w.y, w.z);
+            prev = w;
+          }
+          if (!verts.length) continue;
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+          const mat = new THREE.LineBasicMaterial({ color: new THREE.Color(path.color || st.color || '#7a8aa0'), transparent: true, opacity: 0.85 });
+          customGroup.add(new THREE.LineSegments(geo, mat));
+        }
+      } else if (spec.type === 'network') {
         const nodeById = new Map(spec.data.nodes.map((n) => [n.id, n]));
         const verts = [];
         for (const e of spec.data.edges) {

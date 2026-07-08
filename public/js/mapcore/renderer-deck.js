@@ -68,12 +68,23 @@ function angleDelta(from, to) {
 // deck レイヤーid は `L|<specId>|<part>` — onClick で spec を引くのに使う。
 // insets からも呼ぶため純関数(deckNS と時刻を引数で受ける)。
 function buildCustomDeckLayers(deckNS, registry, tNow) {
-  const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer } = deckNS;
+  const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer, PathLayer } = deckNS;
   const out = [];
   for (const spec of registry.list()) {
     if (!spec.visible) continue;
     const st = spec.style;
-    if (spec.type === 'network') {
+    if (spec.type === 'paths') {
+      out.push(new PathLayer({
+        id: `L|${spec.id}|paths`,
+        data: spec.data.paths,
+        getPath: (p) => p.coords,
+        getColor: (p) => hexToRgb(p.color || st.color || '#7a8aa0').concat(st.opacity ?? 200),
+        getWidth: st.width ?? 1.5,
+        widthUnits: 'pixels', widthMinPixels: st.width ?? 1.5,
+        capRounded: true, jointRounded: true,
+        pickable: spec.pickable,
+      }));
+    } else if (spec.type === 'network') {
       const nodeById = new Map(spec.data.nodes.map((n) => [n.id, n]));
       const edges = spec.data.edges
         .map((e) => ({ ...e, a: nodeById.get(e.from), b: nodeById.get(e.to) }))

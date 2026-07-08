@@ -181,11 +181,12 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
         }));
       }
     } else if (spec.type === 'movers') {
+      // 位置は [lon, lat, alt] — alt はroute補間(既定0)。地下鉄(負)や高架も表現できる。
       const placed = spec.data.tokens.map((tk) => ({ ...tk, _pos: moverPosition(tk, tNow) }));
       out.push(new ScatterplotLayer({
         id: `L|${spec.id}|halo`,
         data: placed,
-        getPosition: (t) => [t._pos.lon, t._pos.lat],
+        getPosition: (t) => [t._pos.lon, t._pos.lat, t._pos.alt],
         getFillColor: hexToRgb(st.haloColor || '#ffffff').concat(60),
         getRadius: (st.iconSize ?? 22) * 0.8, radiusUnits: 'pixels',
         pickable: false,
@@ -193,7 +194,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       out.push(new TextLayer({
         id: `L|${spec.id}|icons`,
         data: placed,
-        getPosition: (t) => [t._pos.lon, t._pos.lat],
+        getPosition: (t) => [t._pos.lon, t._pos.lat, t._pos.alt],
         getText: (t) => t.icon || '🚄',
         getSize: st.iconSize ?? 22, sizeUnits: 'pixels',
         characterSet: 'auto',

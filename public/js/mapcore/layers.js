@@ -162,14 +162,14 @@ export function headingDeg(lat0, lon0, lat1, lon1) {
 }
 
 /**
- * token.route([{lat,lon,t}] 昇順) を時刻 tSec で線形補間する。
- * 返り値: { lat, lon, heading, done } — heading は進行方向(度)。
+ * token.route([{lat,lon,t,alt?}] 昇順) を時刻 tSec で線形補間する。
+ * 返り値: { lat, lon, alt, heading, done } — heading は進行方向(度)、alt はメートル(省略時0)。
  * route が1点なら固定。loop=true なら総時間で周回。範囲外は端にクランプ(done=true)。
  * 純関数: 同じ (token, tSec) → 同じ結果(決定論テスト可能)。
  */
 export function moverPosition(token, tSec) {
   const r = token.route;
-  if (r.length === 1) return { lat: r[0].lat, lon: r[0].lon, heading: 0, done: true };
+  if (r.length === 1) return { lat: r[0].lat, lon: r[0].lon, alt: r[0].alt || 0, heading: 0, done: true };
   const t0 = r[0].t;
   const t1 = r[r.length - 1].t;
   const span = t1 - t0;
@@ -188,6 +188,7 @@ export function moverPosition(token, tSec) {
   return {
     lat: a.lat + (b.lat - a.lat) * u,
     lon: a.lon + (b.lon - a.lon) * u,
+    alt: (a.alt || 0) + ((b.alt || 0) - (a.alt || 0)) * u,
     heading: headingDeg(a.lat, a.lon, b.lat, b.lon),
     done,
   };

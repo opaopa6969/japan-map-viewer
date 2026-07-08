@@ -273,9 +273,85 @@ async function serveBuildings(req, res, path) {
   send({ count: polygons.length, truncated, polygons });
 }
 
+// --- 標高 API (/api/elevation) ------------------------------------------------------
+// 地理院DEM由来のheightfield(public/terrain/japan.heightfield.json)をバイリニア補間。
+// 表示用に間引かれた格子(z10・約1km)なので精度は±数十m — sourceで明示する。
+// 高精度が要る用途は地理院標高APIへの差し替え余地(issue #4)。
+let hfCache = null;
+async function heightfield() {
+  if (!hfCache) {
+    const d = JSON.parse(await readFile(join(PUBLIC, 'terrain/japan.heightfield.json'), 'utf8'));
+    // fetch-terrain.mjs はタイル整列したWebメルカトルのモザイクをダウンサンプルする。
+    // bounds はリクエスト範囲であって実カバー範囲ではないため、zoom+bounds から
+    // タイル範囲(floor整列)を再構成し、タイル座標系で引く(検証: 富士3426m/琵琶湖85m)。
+    const Z = d.zoom;
+    const lon2tx = (lon) => (lon + 180) / 360 * 2 ** Z;
+    const lat2ty = (lat) => {
+      const r = lat * Math.PI / 180;
+      return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * 2 ** Z;
+    };
+    const xMin = Math.floor(lon2tx(d.bounds.lon0));
+    const xMax = Math.floor(lon2tx(d.bounds.lon1));
+    const yMin = Math.floor(lat2ty(d.bounds.lat1));
+    const yMax = Math.floor(lat2ty(d.bounds.lat0));
+    hfCache = {
+      grid: d.grid, height: d.height, lon2tx, lat2ty,
+      xMin, yMin, cols: xMax - xMin + 1, rows: yMax - yMin + 1,
+    };
+  }
+  return hfCache;
+}
+
+async function serveElevation(req, res) {
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=3600' };
+  const q = new URL(req.url, 'http://x').searchParams;
+  const lat = Number(q.get('lat'));
+  const lon = Number(q.get('lon'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    res.writeHead(400, headers);
+    res.end(JSON.stringify({ error: 'lat= と lon= が必要' }));
+    return;
+  }
+  let hf;
+  try {
+    hf = await heightfield();
+  } catch {
+    res.writeHead(404, headers);
+    res.end(JSON.stringify({ error: 'heightfieldが無い。先に `npm run fetch:terrain` を実行。' }));
+    return;
+  }
+  const { grid, height, lon2tx, lat2ty, xMin, yMin, cols, rows } = hf;
+  // タイル整列メルカトルのモザイク座標(0..1) → グリッド。行0=北。
+  const fx = (lon2tx(lon) - xMin) / cols;
+  const fy = (lat2ty(lat) - yMin) / rows;
+  const inside = fx >= 0 && fx < 1 && fy >= 0 && fy < 1;
+  let elevation = null;
+  if (inside) {
+    const gx = fx * grid - 0.5;   // ダウンサンプルはセル左上サンプリングなので中心補正
+    const gy = fy * grid - 0.5;
+    const x0 = Math.max(0, Math.floor(gx));
+    const y0 = Math.max(0, Math.floor(gy));
+    const x1 = Math.min(grid - 1, x0 + 1);
+    const y1 = Math.min(grid - 1, y0 + 1);
+    const tx = Math.min(1, Math.max(0, gx - x0));
+    const ty = Math.min(1, Math.max(0, gy - y0));
+    const h = (X, Y) => height[Y * grid + X];
+    elevation = Math.round(
+      (h(x0, y0) * (1 - tx) + h(x1, y0) * tx) * (1 - ty)
+      + (h(x0, y1) * (1 - tx) + h(x1, y1) * tx) * ty,
+    );
+  }
+  res.writeHead(200, headers);
+  res.end(JSON.stringify({
+    lat, lon, elevation, inside,
+    source: 'heightfield(地理院DEM z10・約1km格子・±数十m。海/範囲外はnullまたは0)',
+  }));
+}
+
 const server = createServer(async (req, res) => {
   let path = (req.url || '/').split('?')[0];
   if (path === '/api/address-points') { serveAddressPoints(req, res); return; }
+  if (path === '/api/elevation') { serveElevation(req, res); return; }
   if (path === '/api/railways' || path.startsWith('/api/railways/')) { serveRailways(req, res, path); return; }
   if (path === '/api/roads' || path.startsWith('/api/roads/')) { serveRoads(req, res, path); return; }
   if (path === '/api/buildings' || path.startsWith('/api/buildings/')) { serveBuildings(req, res, path); return; }

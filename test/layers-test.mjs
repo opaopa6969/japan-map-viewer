@@ -83,6 +83,20 @@ const ok = (c, label) => { assert.ok(c, label); pass++; console.log('ok   ' + la
     '同(token,t)→同結果(決定論)');
 }
 
+// ----- moverPosition: 高度(alt)補間 — 地下鉄/高架(issue #2) -------------------------
+{
+  const subway = { id: 's', route: [
+    { lat: 35.0, lon: 139.0, t: 0, alt: 0 },
+    { lat: 35.1, lon: 139.0, t: 10, alt: -30 },   // 地下30mへ潜る
+    { lat: 35.2, lon: 139.0, t: 20 },              // alt省略=0(地上へ戻る)
+  ] };
+  ok(moverPosition(subway, 5).alt === -15, 'alt線形補間(t=5で-15m)');
+  ok(moverPosition(subway, 15).alt === -15, 'alt省略点は0扱いで補間(t=15で-15m)');
+  ok(moverPosition(subway, 0).alt === 0 && moverPosition(subway, 999).alt === 0, '端点のalt');
+  const flat = { id: 'f', route: [{ lat: 35, lon: 139, t: 0 }, { lat: 36, lon: 139, t: 10 }] };
+  ok(moverPosition(flat, 5).alt === 0, 'alt無しrouteは常に0(後方互換)');
+}
+
 // ----- headingDeg の基本方位 -----------------------------------------------------
 {
   ok(Math.abs(headingDeg(35, 139, 36, 139) - 0) < 0.5, '北=0');

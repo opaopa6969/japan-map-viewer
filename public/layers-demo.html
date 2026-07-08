@@ -58,6 +58,13 @@
       <h2>実データ (国土数値情報 N02)</h2>
       <label class="chk row"><input type="checkbox" id="ly-realrail"> 🛤 実路線・全国 (paths / 約10MB)</label>
       <label class="chk row"><input type="checkbox" id="ly-highway"> 🛣 実高速道路・全国 (N06 / 約3MB)</label>
+      <div id="hw-timeline" style="display:none; padding: 2px 0 4px 22px;">
+        <div class="row" style="gap:6px;">
+          <button class="btn" id="hw-play" style="width:auto; margin:0; padding:4px 10px;">▶</button>
+          <input type="range" id="hw-year" min="1963" max="2024" value="2024" style="flex:1;">
+          <span id="hw-year-label" style="font-size:12px; min-width:3.2em;">2024</span>
+        </div>
+      </div>
       <label class="chk row"><input type="checkbox" id="ly-osmroads"> 🚗 実道路 (OSM / ビューポート連動)</label>
       <label class="chk row"><input type="checkbox" id="ly-buildings"> 🏢 実建物 (OSM / zoom14+)</label>
       <label class="chk row"><input type="checkbox" id="ly-plateau"> 🏙 PLATEAU 3D Tiles (千代田区)</label>
@@ -255,15 +262,31 @@ $('ly-realrail').addEventListener('change', async (e) => {
   }
 });
 
+// 高速道路(N06): 供用開始年つきなので、年スライダー/再生で「道路網が伸びる」を見せる(issue #3)
+let hwData = null;
+let hwTimer = null;
+function hwPaths(year) {
+  return hwData.lines
+    .filter((l) => (l.opened == null || l.opened <= year) && (l.closed == null || l.closed > year))
+    .map((l) => ({
+      id: l.id, coords: l.coords, name: l.name, opened: l.opened,
+      // 開通直後(その年±1)はハイライト色で「いま伸びた」を見せる
+      color: (l.opened != null && year - l.opened <= 1) ? '#e8c468' : '#59a14f',
+    }));
+}
+function hwApplyYear(year) {
+  $('hw-year-label').textContent = year;
+  if (renderer.getLayers().some((l) => l.id === 'highway')) {
+    renderer.updateLayerData('highway', { paths: hwPaths(year) });
+  }
+}
 $('ly-highway').addEventListener('change', async (e) => {
+  $('hw-timeline').style.display = e.target.checked ? 'block' : 'none';
   if (e.target.checked && !renderer.getLayers().some((l) => l.id === 'highway')) {
-    const hw = await (await fetch('/data/japan-highways.json')).json();
+    hwData = await (await fetch('/data/japan-highways.json')).json();
     renderer.addLayer({
       id: 'highway', type: 'paths', zIndex: 2,
-      data: { paths: hw.lines.map((l) => ({
-        id: l.id, coords: l.coords, name: l.name, opened: l.opened,
-        color: '#59a14f',
-      })) },
+      data: { paths: hwPaths(+$('hw-year').value) },
       style: { width: 1.6, opacity: 190 },
       pickable: true,
       onPick: (f, info) => f && showPopup(
@@ -271,7 +294,20 @@ $('ly-highway').addEventListener('change', async (e) => {
     });
   } else {
     renderer.setLayerVisible('highway', e.target.checked);
+    if (!e.target.checked && hwTimer) { clearInterval(hwTimer); hwTimer = null; $('hw-play').textContent = '▶'; }
   }
+});
+$('hw-year').addEventListener('input', (e) => hwApplyYear(+e.target.value));
+$('hw-play').addEventListener('click', () => {
+  if (hwTimer) { clearInterval(hwTimer); hwTimer = null; $('hw-play').textContent = '▶'; return; }
+  if (+$('hw-year').value >= 2024) $('hw-year').value = 1963;
+  $('hw-play').textContent = '⏸';
+  hwTimer = setInterval(() => {
+    const y = +$('hw-year').value + 1;
+    $('hw-year').value = y;
+    hwApplyYear(y);
+    if (y >= 2024) { clearInterval(hwTimer); hwTimer = null; $('hw-play').textContent = '▶'; }
+  }, 180);
 });
 
 // OSM道路: ビューポート連動。/api/roads?bbox= からズームに応じたクラスだけ取得し、

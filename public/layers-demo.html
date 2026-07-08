@@ -351,13 +351,13 @@ const ROAD_COLORS = {
 let roadsMoveHandler = null;
 async function loadRoads() {
   const map = renderer.getMap();
-  const b = map.getBounds();
+  const pb = paddedBounds(map);
   const z = map.getZoom();
   const classes = z < 8 ? 'motorway,trunk'
     : z < 10 ? 'motorway,motorway_link,trunk,trunk_link,primary'
       : 'motorway,motorway_link,trunk,trunk_link,primary,secondary,tertiary';
   const c0 = map.getCenter();
-  const res = await fetch(`/api/roads?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&center=${c0.lng},${c0.lat}&classes=${classes}`);
+  const res = await fetch(`/api/roads?bbox=${pb.w},${pb.s},${pb.e},${pb.n}&center=${c0.lng},${c0.lat}&classes=${classes}`);
   const r = await res.json();
   if (r.error) {
     showPopup(`<b>OSM道路データ未生成</b><br><span class="k">${r.error}</span>`, { x: 40, y: 40 });
@@ -406,6 +406,30 @@ function showLoadNote(kind, r) {
     el._tm = setTimeout(() => { el.style.display = 'none'; }, 2500);
   }
 }
+// ピッチをつけた視界は地平線側に長く伸びるが、getBounds()のbboxは手前寄りに
+// クランプされ「遠くの区域が取れない」(p60実測で画面上部1/4が圏外)。視線方向
+// (bearing)へ、ピッチに比例してbboxを拡張する。center優先ソートがあるので
+// 広げすぎても手前が欠ける心配はない。
+function paddedBounds(map) {
+  const b = map.getBounds();
+  let w = b.getWest();
+  let s = b.getSouth();
+  let e = b.getEast();
+  let n = b.getNorth();
+  const pitch = map.getPitch();
+  if (pitch > 20) {
+    const f = pitch / 40;                       // p60 → 1.5倍ぶん奥へ
+    const dLon = (e - w) * f;
+    const dLat = (n - s) * f;
+    const rad = map.getBearing() * Math.PI / 180;
+    const fx = Math.sin(rad);                   // 画面上方向が指す方位(東成分)
+    const fy = Math.cos(rad);                   // (北成分)
+    if (fy > 0) n += dLat * fy; else s += dLat * fy;
+    if (fx > 0) e += dLon * fx; else w += dLon * fx;
+  }
+  return { w, s, e, n };
+}
+
 let bldMoveHandler = null;
 let lastBuildingBinary = null;
 async function loadBuildings() {

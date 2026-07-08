@@ -476,6 +476,10 @@ async function loadBuildings() {
 $('ly-buildings').addEventListener('change', (e) => {
   const map = renderer.getMap();
   if (e.target.checked) {
+    if ($('ly-plateau').checked) {
+      $('ly-plateau').checked = false;
+      $('ly-plateau').dispatchEvent(new Event('change'));
+    }
     if (map.getZoom() < 14) renderer.focusOn({ lat: 35.681, lon: 139.767, zoom: 15, pitch: 55, duration: 1500 });
     loadBuildings();
     bldMoveHandler = () => loadBuildings();
@@ -490,6 +494,11 @@ $('ly-buildings').addEventListener('change', (e) => {
 // PLATEAU 3D Tiles(実測高さの3D都市モデル)。deckのTile3DLayerがLODストリーミング。
 $('ly-plateau').addEventListener('change', (e) => {
   if (e.target.checked) {
+    // OSM建物との二重表示は「ずれて見える」だけなので排他にする(比較したい時は交互に)
+    if ($('ly-buildings').checked) {
+      $('ly-buildings').checked = false;
+      $('ly-buildings').dispatchEvent(new Event('change'));
+    }
     if (!renderer.getLayers().some((l) => l.id === 'plateau')) {
       renderer.addLayer({
         id: 'plateau', type: 'tiles3d', zIndex: 7,

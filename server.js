@@ -181,6 +181,8 @@ async function roads() {
     const dataDir = join(root, 'data');
     let files = [];
     try { files = (await readdir(dataDir)).filter((f) => /^osm-roads-.*\.jrb$/.test(f)); } catch { /* dataDir無し */ }
+    // japan(全国)があれば地域ファイルは読まない(同じwayが二重に返るのを防ぐ)
+    if (files.includes('osm-roads-japan.jrb')) files = ['osm-roads-japan.jrb'];
     for (const f of files) {
       try {
         const handle = openRoads(await readFile(join(dataDir, f)));
@@ -249,6 +251,7 @@ async function buildings() {
     buildingsHandles = [];
     let files = [];
     try { files = (await readdir(join(root, 'data'))).filter((f) => /^osm-buildings-.*\.jrb$/.test(f)); } catch { /* 無し */ }
+    if (files.includes('osm-buildings-japan.jrb')) files = ['osm-buildings-japan.jrb'];
     for (const f of files) {
       try {
         const handle = openRoads(await readFile(join(root, 'data', f)), { cellDeg: 0.02 });
@@ -258,6 +261,37 @@ async function buildings() {
     }
   }
   return buildingsHandles;
+}
+
+// 地域まるごと直送: JRBファイルをそのまま返す(再エンコード37秒を踏まない高速路)。
+// gzipは初回にディスクへキャッシュ(data/osm-buildings-<region>.jrb.gz)。
+async function serveBuildingsRegionFile(req, res, path) {
+  const region = path.slice('/api/buildings/region/'.length).replace(/[^a-z0-9-]/g, '');
+  const file = join(root, 'data', `osm-buildings-${region}.jrb`);
+  const gzFile = `${file}.gz`;
+  const headers = { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'public, max-age=3600' };
+  try {
+    const accept = String(req.headers['accept-encoding'] || '');
+    if (accept.includes('gzip')) {
+      let gz;
+      try {
+        gz = await readFile(gzFile);
+      } catch {
+        gz = gzipSync(await readFile(file));
+        const { writeFile } = await import('node:fs/promises');
+        await writeFile(gzFile, gz);   // 初回のみ生成(次回からディスク直送)
+      }
+      res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': gz.length });
+      res.end(gz);
+    } else {
+      const raw = await readFile(file);
+      res.writeHead(200, { ...headers, 'Content-Length': raw.length });
+      res.end(raw);
+    }
+  } catch {
+    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: `osm-buildings-${region}.jrb が無い` }));
+  }
 }
 
 async function serveBuildings(req, res, path) {
@@ -293,7 +327,7 @@ async function serveBuildings(req, res, path) {
   }
   // format=bin: JRBバイナリで返す(100万棟級の本命経路。JSONは互換用に20万まで)
   const wantBin = q.get('format') === 'bin';
-  const limit = Math.min(wantBin ? 6200000 : 200000, +(q.get('limit') || 3000));
+  const limit = Math.min(wantBin ? 10000000 : 200000, +(q.get('limit') || 3000));
   // 上限超過時の切り詰めは「注視点から近い順」(codecのqueryBboxがセル走査から中心優先)。
   // ピッチをつけたカメラではgetBounds()のbbox中心が地平線方向へ大きくズレるため、
   // クライアントは center=lon,lat(map.getCenter()=実際の注視点)を渡すこと。
@@ -466,6 +500,7 @@ const server = createServer(async (req, res) => {
   if (path === '/api/sysinfo') { serveSysinfo(res); return; }
   if (path === '/api/railways' || path.startsWith('/api/railways/')) { serveRailways(req, res, path); return; }
   if (path === '/api/roads' || path.startsWith('/api/roads/')) { serveRoads(req, res, path); return; }
+  if (path.startsWith('/api/buildings/region/')) { serveBuildingsRegionFile(req, res, path); return; }
   if (path === '/api/buildings' || path.startsWith('/api/buildings/')) { serveBuildings(req, res, path); return; }
   if (ALIASES[path]) path = ALIASES[path];
   const file = normalize(join(PUBLIC, path));

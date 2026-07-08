@@ -6,3 +6,4 @@ public/img/
 public/js/basemap.js
 data/*.jrb
 public/data/plateau/
+data/*.jrb.gz

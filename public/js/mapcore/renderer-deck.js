@@ -250,6 +250,7 @@ export function createRendererDeck(container, opts = {}) {
     mode: 'points',      // points | hex | heat
     base: 'dark',        // dark | gsi
     kanji: true,
+    labels: true,   // ベース地図の地名ラベル(町名無しモードでfalse)
     anim: true,
     pulse: 1,            // アンビエント演出の半径スケール
     showPoints: true,    // '点' トグル（renderer-2d の layers.points 相当）
@@ -379,6 +380,17 @@ export function createRendererDeck(container, opts = {}) {
   function draw() {
     overlay.setProps({ layers: buildLayers() });
     drawInsets();
+  }
+
+  // ベース地図のラベル(シンボルレイヤー)表示切替 — 「町名無しモード」。
+  // データレイヤーには触れない(ベーススタイル側のvisibilityだけ)。
+  function applyLabelVisibility() {
+    const style = map.getStyle();
+    if (!style || !style.layers) return;
+    for (const layer of style.layers) {
+      if (layer.type !== 'symbol') continue;
+      try { map.setLayoutProperty(layer.id, 'visibility', state.labels ? 'visible' : 'none'); } catch (e) { /* noop */ }
+    }
   }
 
   // ベース地図ラベルの日本語(漢字)化。CARTO(dark) の name:ja を優先。地理院は no-op。
@@ -512,7 +524,7 @@ export function createRendererDeck(container, opts = {}) {
 
   function applyStyle() {
     map.setStyle(STYLES[state.base]);
-    map.once('styledata', () => { localizeLabels(); draw(); });
+    map.once('styledata', () => { localizeLabels(); applyLabelVisibility(); draw(); });
   }
 
   // --- wipe(画面切り替え演出): 共通実装(fx.js) -------------------------------------
@@ -534,6 +546,7 @@ export function createRendererDeck(container, opts = {}) {
     },
     setBase(b) { state.base = b; applyStyle(); },
     setKanji(v) { state.kanji = v; applyStyle(); },
+    setLabels(v) { state.labels = !!v; applyLabelVisibility(); },   // 町名無しモード
     setAnim(v) { state.anim = v; },
     home() { map.easeTo({ center: view.center, zoom: view.zoom, pitch: 0, bearing: 0 }); },
     getMap() { return map; },

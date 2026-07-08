@@ -478,6 +478,25 @@ setInterval(() => { dbg.fps = dbg.frames; dbg.frames = 0; }, 1000);
 setTimeout(() => {
   try { renderer.getOverlay().setProps({ _onMetrics: (m) => { dbg.metrics = m; } }); } catch (_) { /* 未対応でも動く */ }
 }, 2000);
+// ハードウェア情報: GPU名はWebGLのdebug_renderer_infoから(ANGLEラッパーを剥がす)。
+// CPUはブラウザのプライバシー制限でモデル名が取れないため、論理コア数+archまで。
+dbg.hw = (() => {
+  let gpu = '-';
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    gpu = gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER);
+    const m = /ANGLE \(([^,]+), ([^,]+)/.exec(gpu);   // "ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 ..., D3D11)"
+    if (m) gpu = m[2].replace(/ (Direct3D|D3D|OpenGL|Vulkan).*$/, '');
+  } catch (_) { /* 取得不可でも動く */ }
+  let cpu = `${navigator.hardwareConcurrency || '?'}コア`;
+  try {
+    navigator.userAgentData?.getHighEntropyValues?.(['architecture']).then((v) => {
+      if (v.architecture) dbg.hw.cpu = `${navigator.hardwareConcurrency || '?'}コア/${v.architecture}`;
+    });
+  } catch (_) { /* 同上 */ }
+  return { gpu, cpu };
+})();
 // メインスレッドの詰まり(event loop lag): setTimeoutの遅着で測る
 (function lagLoop() {
   const t0 = performance.now();
@@ -489,6 +508,7 @@ setInterval(() => {
   const layers = renderer.getLayers().filter((l) => l.visible).map((l) => l.id).join(' ');
   const m = dbg.metrics;
   const lines = [
+    `${dbg.hw.gpu}  |  CPU ${dbg.hw.cpu}(モデル名はブラウザ非公開)`,
     `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms`,
     m ? `deck CPU ${m.cpuTimePerFrame != null ? m.cpuTimePerFrame.toFixed(2) : '-'}ms/f  GPU ${m.gpuTimePerFrame != null && m.gpuTimePerFrame > 0 ? m.gpuTimePerFrame.toFixed(2) + 'ms/f' : '(timer query非対応)'}` : 'deck metrics: 取得待ち…',
     m && m.gpuMemory ? `GPUメモリ(推定) ${(m.gpuMemory / 1e6).toFixed(0)}MB (buf ${(m.bufferMemory / 1e6).toFixed(0)} / tex ${(m.textureMemory / 1e6).toFixed(0)})` : '',

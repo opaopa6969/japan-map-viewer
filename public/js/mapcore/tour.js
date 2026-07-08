@@ -149,7 +149,7 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
         st.speed = cz.speed * 0.5;
         // ホップ計画: 走行距離の等分点で hops 回(進行方向は変えず上に飛んで左右を見る)
         const runM = city.cruiseKm ? city.cruiseKm * 1000 : null;
-        const nHops = runM ? (city.hops ?? (runM >= 2500 ? 3 : 2)) : 0;
+        const nHops = runM ? (city.hops ?? 0) : 0;   // ホップはcityが明示した時だけ
         st.hopsAt = [];
         for (let h = 1; h <= nHops; h++) st.hopsAt.push(st.s0 + runM * h / (nHops + 1));
         st.hop = null;
@@ -163,8 +163,9 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
       const targetSpeed = cz.speed * Math.max(0.35, 1 - Math.min(0.65, (turn / 90) * cz.curveSlow));
       st.speed += (targetSpeed - st.speed) * Math.min(1, 1.6 * dt);
       st.s += st.speed * dt;
-      cam.lon = p.lon + (ahead.lon - p.lon) * 0.35;         // 注視点は少し先(コーナーの内側を見る)
-      cam.lat = p.lat + (ahead.lat - p.lat) * 0.35;
+      cam.lon = p.lon;                                      // 道路上に正確に乗る(ドローン感の排除)
+      cam.lat = p.lat;
+      void ahead;
       // ホップ: 到達点を跨いだら開始。進行方向は変えず、上に飛んで左右を見る
       if (!st.hop && st.hopsAt && st.hopsAt.length && st.s >= st.hopsAt[0]) {
         st.hopsAt.shift();
@@ -180,7 +181,8 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
           lookOff = Math.sin(2 * Math.PI * u) * cz.lookDeg * rise;   // 右→左を見て戻す
         }
       }
-      cam.bearing += angleDelta(cam.bearing, p.heading) * Math.min(1, cz.bearingLag * dt);
+      const hdgAhead = routeAt(st.route, st.s + 15).heading;   // 15m先の道の向き
+      cam.bearing += angleDelta(cam.bearing, hdgAhead) * Math.min(1, cz.bearingLag * dt);
       cam.zoom = cz.zoom - cz.hopZoom * rise;
       cam.pitch = cz.pitch - 16 * rise;
       const bearingOut = cam.bearing + lookOff;             // 首振りはカメラだけ(進路は不変)

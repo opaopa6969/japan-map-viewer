@@ -1,17 +1,17 @@
 {
   "name": "japan-grand-tour",
-  "description": "日本全景から隼の急降下→車の高さで実道路を200km/hドリフト疾走(2〜3km、途中で飛び上がって左右を見る)→上昇して次へ。東京4名所+全国の13ストップ。",
+  "description": "日本全景から隼の急降下→地面すれすれ(z18)を270km/hで実道路をドリフト疾走(2〜3km)→上昇して次へ。東京4名所+全国の13ストップ。",
   "overview": {
     "zoom": 5.8,
     "pitch": 35
   },
   "cruise": {
-    "zoom": 17.3,
-    "pitch": 77,
-    "speed": 56,
-    "lookAhead": 60,
-    "bearingLag": 2.0,
-    "curveSlow": 1.2,
+    "zoom": 18.0,
+    "pitch": 78,
+    "speed": 75,
+    "lookAhead": 45,
+    "bearingLag": 3.5,
+    "curveSlow": 1.1,
     "hopZoom": 0.9,
     "hopSec": 5,
     "lookDeg": 55
@@ -31,92 +31,79 @@
       "name": "東京・丸の内",
       "lat": 35.6812,
       "lon": 139.7671,
-      "cruiseKm": 2.5,
-      "hops": 3
+      "cruiseKm": 2.5
     },
     {
       "name": "東京・新宿",
       "lat": 35.6896,
       "lon": 139.7006,
-      "cruiseKm": 2.0,
-      "hops": 2
+      "cruiseKm": 2.0
     },
     {
       "name": "東京・渋谷",
       "lat": 35.658,
       "lon": 139.7016,
-      "cruiseKm": 2.0,
-      "hops": 2
+      "cruiseKm": 2.0
     },
     {
       "name": "東京・秋葉原",
       "lat": 35.6984,
       "lon": 139.7731,
-      "cruiseKm": 2.0,
-      "hops": 2
+      "cruiseKm": 2.0
     },
     {
       "name": "札幌・すすきの",
       "lat": 43.0555,
       "lon": 141.3524,
-      "cruiseKm": 2.5,
-      "hops": 3
+      "cruiseKm": 2.5
     },
     {
       "name": "仙台",
       "lat": 38.2682,
       "lon": 140.8694,
-      "cruiseKm": 2.5,
-      "hops": 2
+      "cruiseKm": 2.5
     },
     {
       "name": "金沢",
       "lat": 36.5613,
       "lon": 136.6562,
-      "cruiseKm": 2.5,
-      "hops": 2
+      "cruiseKm": 2.5
     },
     {
       "name": "京都",
       "lat": 35.0116,
       "lon": 135.7681,
-      "cruiseKm": 3.0,
-      "hops": 3
+      "cruiseKm": 3.0
     },
     {
       "name": "大阪・梅田",
       "lat": 34.7025,
       "lon": 135.4959,
-      "cruiseKm": 2.5,
-      "hops": 3
+      "cruiseKm": 2.5
     },
     {
       "name": "神戸",
       "lat": 34.6913,
       "lon": 135.183,
-      "cruiseKm": 2.5,
-      "hops": 2
+      "cruiseKm": 2.5
     },
     {
       "name": "広島",
       "lat": 34.3853,
       "lon": 132.4553,
-      "cruiseKm": 2.5,
-      "hops": 2
+      "cruiseKm": 2.5
     },
     {
       "name": "福岡・天神",
       "lat": 33.5902,
       "lon": 130.4017,
-      "cruiseKm": 2.5,
-      "hops": 3
+      "cruiseKm": 2.5
     },
     {
       "name": "東京(帰還)",
       "lat": 35.6812,
       "lon": 139.7671,
-      "cruiseKm": 2.0,
-      "hops": 2
+      "cruiseKm": 2.0
     }
   ]
 }

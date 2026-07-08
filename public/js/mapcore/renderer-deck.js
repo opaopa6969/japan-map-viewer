@@ -33,7 +33,27 @@ import { createWipe } from './fx.js';
 
 const DEFAULT_STYLES = {
   // dark: CARTO 無料ダーク(OpenMapTiles スキーマ = name:ja あり)。gsi: 国土地理院ラスタ。
+  // darkRaster: 同じ見た目のラスタ版 — ベクタ解析もラベル衝突判定も無いので
+  // 高速移動(ツアー)中のFPSが段違い(タイルはデコードして貼るだけ)。
   dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  darkRaster: {
+    version: 8,
+    sources: {
+      carto: {
+        type: 'raster',
+        tiles: [
+          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+        ],
+        tileSize: 256, attribution: '© CARTO © OpenStreetMap contributors', maxzoom: 19,
+      },
+    },
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': '#0e1116' } },
+      { id: 'carto', type: 'raster', source: 'carto' },
+    ],
+  },
   gsi: {
     version: 8,
     sources: {

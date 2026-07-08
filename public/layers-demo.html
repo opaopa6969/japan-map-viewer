@@ -648,7 +648,7 @@ async function getTourRoute(city) {
     + `&center=${city.lon},${city.lat}&classes=trunk,primary,secondary&limit=2500`);
   const r = await res.json();
   if (r.error || !r.paths || !r.paths.length) return null;
-  const chain = stitchFrom(r.paths.map((p) => p.coords), [city.lon, city.lat]);
+  const chain = stitchFrom(r.paths.map((p) => p.coords), [city.lon, city.lat], 1.6e-7);   // ≈40m: 本当に繋がった道だけ走る
   return chain.length >= 2 ? chain : null;
 }
 
@@ -721,6 +721,7 @@ function stopTour() {
   stopTourBlur();
   const m0 = renderer.getMap();
   if (window._tourPrevPR && m0.setPixelRatio) { m0.setPixelRatio(window._tourPrevPR); window._tourPrevPR = null; }
+  if (window._tourPrevBase) { renderer.setBase(window._tourPrevBase); window._tourPrevBase = null; }
   $('tour-btn').textContent = '🦅 ツアー開始(録画つき)';
   $('tour-btn').classList.remove('active');
 }
@@ -731,6 +732,9 @@ $('tour-btn').addEventListener('click', async () => {
   if ($('tour-fast').checked) {
     const m = renderer.getMap();
     if (m.setPixelRatio) { window._tourPrevPR = window.devicePixelRatio; m.setPixelRatio(1); }
+    // ベクタ解析+日本語ラベル衝突判定がFPSを喰う主犯 — ツアー中はラスタ版ダークへ
+    renderer.setBase('darkRaster');
+    window._tourPrevBase = 'dark';
   }
   if ($('tour-blur').checked) startTourBlur();
   if ($('tour-rec').checked) startTourRecording();   // ブラー有効時は合成キャンバスを録画
@@ -830,8 +834,8 @@ $('dome-r').addEventListener('input', () => {
   if ($('ly-dome').checked) loadDome();
 });
 
-// 区間(LineString断片)を端点マッチで1本に繋ぐ(貪欲・許容≈300m)。origin=開始点
-function stitchFrom(segs, origin) {
+// 区間(LineString断片)を端点マッチで1本に繋ぐ(貪欲)。origin=開始点、tol2=許容距離^2(度^2)
+function stitchFrom(segs, origin, tol2 = 9e-6) {
   const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
   const used = new Set();
   let bi = 0;
@@ -847,7 +851,7 @@ function stitchFrom(segs, origin) {
     const end = chain[chain.length - 1];
     let found = -1;
     let frev = false;
-    let fd = 9e-6;   // ≈300m^2(度)
+    let fd = tol2;   // 既定≈300m^2(度)。ツアーは厳格な値を渡す
     segs.forEach((s, i) => {
       if (used.has(i)) return;
       if (d2(s[0], end) < fd) { fd = d2(s[0], end); found = i; frev = false; }

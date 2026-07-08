@@ -257,20 +257,30 @@ async function serveBuildings(req, res, path) {
     send({ regions: handles.map(({ file, handle }) => ({ file, ...handle.meta })) });
     return;
   }
-  const bboxRaw = (q.get('bbox') || '').split(',').map(Number);
+  // 2つのクエリ形:
+  //   bbox=lon0,lat0,lon1,lat1 [&center=]      … ビューポート配信(注視点優先切り詰め)
+  //   center=lon,lat&radius=800                … ドームセレクタ(半径m内の建物だけ)
+  const centerRaw = (q.get('center') || '').split(',').map(Number);
+  const hasCenter = centerRaw.length === 2 && centerRaw.every(Number.isFinite);
+  const radius = q.get('radius') ? +q.get('radius') : null;
+  let bboxRaw = (q.get('bbox') || '').split(',').map(Number);
+  if (radius && hasCenter) {
+    const dLat = radius / 111320;
+    const dLon = radius / (111320 * Math.cos(centerRaw[1] * Math.PI / 180));
+    bboxRaw = [centerRaw[0] - dLon, centerRaw[1] - dLat, centerRaw[0] + dLon, centerRaw[1] + dLat];
+  }
   if (bboxRaw.length !== 4 || bboxRaw.some((v) => !Number.isFinite(v))) {
     res.writeHead(400, headers);
-    res.end(JSON.stringify({ error: 'bbox=lon0,lat0,lon1,lat1 が必要' }));
+    res.end(JSON.stringify({ error: 'bbox=lon0,lat0,lon1,lat1 か center=lon,lat&radius=m が必要' }));
     return;
   }
   const limit = Math.min(20000, +(q.get('limit') || 3000));
   // 上限超過時の切り詰めは「注視点から近い順」(codecのqueryBboxがセル走査から中心優先)。
   // ピッチをつけたカメラではgetBounds()のbbox中心が地平線方向へ大きくズレるため、
   // クライアントは center=lon,lat(map.getCenter()=実際の注視点)を渡すこと。
-  const centerRaw = (q.get('center') || '').split(',').map(Number);
-  const center = (centerRaw.length === 2 && centerRaw.every(Number.isFinite))
-    ? centerRaw
-    : [(bboxRaw[0] + bboxRaw[2]) / 2, (bboxRaw[1] + bboxRaw[3]) / 2];
+  const center = hasCenter ? centerRaw : [(bboxRaw[0] + bboxRaw[2]) / 2, (bboxRaw[1] + bboxRaw[3]) / 2];
+  const kLat = 111320;
+  const kLon = 111320 * Math.cos(center[1] * Math.PI / 180);
   const polygons = [];
   let truncated = false;
   for (const { handle } of handles) {
@@ -278,11 +288,18 @@ async function serveBuildings(req, res, path) {
     const r = handle.queryBbox(bboxRaw, { maxWays: limit - polygons.length, center });
     truncated = truncated || r.truncated;
     for (const i of r.indices) {
+      if (radius) {
+        // ドーム: 半径内(建物bbox中心との距離)だけ。円形の縁がbboxでなく本当の円になる
+        const [mnx, mny, mxx, mxy] = handle.bboxOf(i);
+        const dx = ((mnx + mxx) / 2 / 1e5 - center[0]) * kLon;
+        const dy = ((mny + mxy) / 2 / 1e5 - center[1]) * kLat;
+        if (dx * dx + dy * dy > radius * radius) continue;
+      }
       const w = handle.decodeWay(i);
       polygons.push({ id: `${handle.meta.region}:${i}`, name: w.name, height: w.value / 10, ring: w.coords });
     }
   }
-  send({ count: polygons.length, truncated, polygons });
+  send({ count: polygons.length, truncated, radius, polygons });
 }
 
 // --- 標高 API (/api/elevation) ------------------------------------------------------

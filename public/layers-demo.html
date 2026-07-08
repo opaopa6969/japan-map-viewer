@@ -67,6 +67,15 @@
       </div>
       <label class="chk row"><input type="checkbox" id="ly-osmroads"> 🚗 実道路 (OSM / ビューポート連動)</label>
       <label class="chk row"><input type="checkbox" id="ly-buildings"> 🏢 実建物 (OSM / zoom14+)</label>
+      <label class="chk row"><input type="checkbox" id="ly-dome"> 🔦 ドームセレクタ (建物を半径Rで選択)</label>
+      <div id="dome-ui" style="display:none; padding: 2px 0 4px 22px;">
+        <div class="row" style="gap:6px;">
+          <span style="font-size:12px;">R</span>
+          <input type="range" id="dome-r" min="200" max="2500" step="50" value="800" style="flex:1;">
+          <span id="dome-r-label" style="font-size:12px; min-width:3.6em;">800m</span>
+        </div>
+        <p class="sub" style="margin:2px 0 0;">位置=地図を動かして狙う。統計は左下</p>
+      </div>
       <label class="chk row"><input type="checkbox" id="ly-plateau"> 🏙 PLATEAU 3D Tiles (千代田区)</label>
       <button class="btn" id="shinkansen">🚅 東海道新幹線を実線路で走らせる</button>
       <p class="sub">路線クリックで路線名/会社(高速は供用年)。データは /api/railways/… でも検索可。
@@ -432,6 +441,84 @@ $('ly-plateau').addEventListener('change', (e) => {
   } else {
     renderer.setLayerVisible('plateau', false);
   }
+});
+
+// ドームセレクタ(🔦): 地図中心+半径Rで建物を選択し、円環+統計(件数/最高/平均)を出す。
+// 「上限切り詰めの円盤(under the dome)」が地域セレクタとして案外良かったので正式機能化。
+let domeMoveHandler = null;
+function circleRing(c0, rMeters, n = 72) {
+  const kLat = 111320;
+  const kLon = 111320 * Math.cos(c0.lat * Math.PI / 180);
+  return Array.from({ length: n + 1 }, (_, i) => {
+    const a = (i / n) * 2 * Math.PI;
+    return [c0.lng + Math.cos(a) * rMeters / kLon, c0.lat + Math.sin(a) * rMeters / kLat];
+  });
+}
+async function loadDome() {
+  const map = renderer.getMap();
+  const c0 = map.getCenter();
+  const r = +$('dome-r').value;
+  const res = await fetch(`/api/buildings?center=${c0.lng},${c0.lat}&radius=${r}&limit=12000`);
+  const d = await res.json();
+  if (d.error) {
+    showPopup(`<b>OSM建物データ未生成</b><br><span class="k">${d.error}</span>`, { x: 40, y: 40 });
+    $('ly-dome').checked = false;
+    return;
+  }
+  const ringSpec = {
+    id: 'dome-ring', type: 'paths', zIndex: 9,
+    data: { paths: [{ id: 'ring', coords: circleRing(c0, r), color: '#e8c468' }] },
+    style: { width: 2.5, opacity: 230 },
+  };
+  const bldSpec = {
+    id: 'dome-bld', type: 'polygons', zIndex: 6,
+    data: { polygons: d.polygons },
+    style: { color: '#a3b18a', defaultHeight: 8, opacity: 235 },
+    pickable: true,
+    onPick: (f, info) => f && showPopup(
+      `<b>${f.name || '(名無し建物)'}</b><br><span class="k">高さ:</span> ${f.height ? f.height + 'm' : '不明(既定8m)'}`, info),
+  };
+  const exists = renderer.getLayers().some((l) => l.id === 'dome-bld');
+  if (exists) {
+    renderer.updateLayerData('dome-bld', bldSpec.data);
+    renderer.updateLayerData('dome-ring', ringSpec.data);
+    renderer.setLayerVisible('dome-bld', true);
+    renderer.setLayerVisible('dome-ring', true);
+  } else {
+    renderer.addLayer(bldSpec);
+    renderer.addLayer(ringSpec);
+  }
+  // 統計: 地域セレクタとしての本体。件数・最高建物・平均高さ・名前付き件数
+  const withH = d.polygons.filter((p) => p.height > 0);
+  const tallest = withH.reduce((a, p) => (p.height > (a?.height || 0) ? p : a), null);
+  const avg = withH.length ? (withH.reduce((t, p) => t + p.height, 0) / withH.length).toFixed(1) : '-';
+  const named = d.polygons.filter((p) => p.name).length;
+  const el = $('loadnote');
+  el.innerHTML = `🔦 R=${r}m: <b>${d.count.toLocaleString()}棟</b>${d.truncated ? '+(上限)' : ''}`
+    + ` / 最高: ${tallest ? `${tallest.name || '(名無し)'} ${tallest.height}m` : '-'}`
+    + ` / 高さ判明${withH.length}棟の平均 ${avg}m / 名前付き ${named}棟`;
+  el.style.display = 'block';
+  clearTimeout(el._tm);
+}
+$('ly-dome').addEventListener('change', (e) => {
+  const map = renderer.getMap();
+  $('dome-ui').style.display = e.target.checked ? 'block' : 'none';
+  if (e.target.checked) {
+    if (map.getZoom() < 13) renderer.focusOn({ zoom: 14, duration: 800 });
+    loadDome();
+    domeMoveHandler = () => loadDome();
+    map.on('moveend', domeMoveHandler);
+  } else {
+    if (domeMoveHandler) map.off('moveend', domeMoveHandler);
+    domeMoveHandler = null;
+    renderer.setLayerVisible('dome-bld', false);
+    renderer.setLayerVisible('dome-ring', false);
+    $('loadnote').style.display = 'none';
+  }
+});
+$('dome-r').addEventListener('input', () => {
+  $('dome-r-label').textContent = $('dome-r').value + 'm';
+  if ($('ly-dome').checked) loadDome();
 });
 
 // 区間(LineString断片)を端点マッチで1本に繋ぐ(貪欲・許容≈300m)

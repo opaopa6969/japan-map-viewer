@@ -57,8 +57,11 @@
     <div class="group">
       <h2>実データ (国土数値情報 N02)</h2>
       <label class="chk row"><input type="checkbox" id="ly-realrail"> 🛤 実路線・全国 (paths / 約10MB)</label>
+      <label class="chk row"><input type="checkbox" id="ly-highway"> 🛣 実高速道路・全国 (N06 / 約3MB)</label>
+      <label class="chk row"><input type="checkbox" id="ly-osmroads"> 🚗 実道路 (OSM / ビューポート連動)</label>
       <button class="btn" id="shinkansen">🚅 東海道新幹線を実線路で走らせる</button>
-      <p class="sub">路線クリックで路線名/会社。データは /api/railways/… でも検索可</p>
+      <p class="sub">路線クリックで路線名/会社(高速は供用年)。データは /api/railways/… でも検索可。
+        OSM道路は要 <code>npm run fetch:osm-roads</code>(ズームに応じ /api/roads?bbox= から取得)</p>
     </div>
 
     <div class="group">
@@ -247,6 +250,74 @@ $('ly-realrail').addEventListener('change', async (e) => {
     });
   } else {
     renderer.setLayerVisible('realrail', e.target.checked);
+  }
+});
+
+$('ly-highway').addEventListener('change', async (e) => {
+  if (e.target.checked && !renderer.getLayers().some((l) => l.id === 'highway')) {
+    const hw = await (await fetch('/data/japan-highways.json')).json();
+    renderer.addLayer({
+      id: 'highway', type: 'paths', zIndex: 2,
+      data: { paths: hw.lines.map((l) => ({
+        id: l.id, coords: l.coords, name: l.name, opened: l.opened,
+        color: '#59a14f',
+      })) },
+      style: { width: 1.6, opacity: 190 },
+      pickable: true,
+      onPick: (f, info) => f && showPopup(
+        `<b>${f.name}</b><br><span class="k">供用開始:</span> ${f.opened ?? '不明'}年`, info),
+    });
+  } else {
+    renderer.setLayerVisible('highway', e.target.checked);
+  }
+});
+
+// OSM道路: ビューポート連動。/api/roads?bbox= からズームに応じたクラスだけ取得し、
+// updateLayerData で差し替える(サーバがバイナリcodecをオンメモリ保持し部分デコード)。
+const ROAD_COLORS = {
+  motorway: '#e15759', motorway_link: '#e15759', trunk: '#e8a13c', trunk_link: '#e8a13c',
+  primary: '#e8c468', secondary: '#9aa46b', tertiary: '#7a8aa0',
+};
+let roadsMoveHandler = null;
+async function loadRoads() {
+  const map = renderer.getMap();
+  const b = map.getBounds();
+  const z = map.getZoom();
+  const classes = z < 8 ? 'motorway,trunk'
+    : z < 10 ? 'motorway,motorway_link,trunk,trunk_link,primary'
+      : 'motorway,motorway_link,trunk,trunk_link,primary,secondary,tertiary';
+  const res = await fetch(`/api/roads?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&classes=${classes}`);
+  const r = await res.json();
+  if (r.error) {
+    showPopup(`<b>OSM道路データ未生成</b><br><span class="k">${r.error}</span>`, { x: 40, y: 40 });
+    $('ly-osmroads').checked = false;
+    return;
+  }
+  const paths = r.paths.map((p) => ({ ...p, color: ROAD_COLORS[p.kind] || '#7a8aa0' }));
+  if (renderer.getLayers().some((l) => l.id === 'osmroads')) {
+    renderer.updateLayerData('osmroads', { paths });
+    renderer.setLayerVisible('osmroads', true);
+  } else {
+    renderer.addLayer({
+      id: 'osmroads', type: 'paths', zIndex: 2,
+      data: { paths },
+      style: { width: 1.4, opacity: 190 },
+      pickable: true,
+      onPick: (f, info) => f && showPopup(
+        `<b>${f.name || '(名無し道路)'}</b><br><span class="k">種別:</span> ${f.kind}`, info),
+    });
+  }
+}
+$('ly-osmroads').addEventListener('change', (e) => {
+  const map = renderer.getMap();
+  if (e.target.checked) {
+    loadRoads();
+    roadsMoveHandler = () => loadRoads();
+    map.on('moveend', roadsMoveHandler);
+  } else {
+    if (roadsMoveHandler) map.off('moveend', roadsMoveHandler);
+    roadsMoveHandler = null;
+    renderer.setLayerVisible('osmroads', false);
   }
 });
 

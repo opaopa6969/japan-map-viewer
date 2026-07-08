@@ -4,9 +4,10 @@
 //  - VACANT_SERVICE_URL 設定時: vacant-service の geo エクスポート
 //    (/api/errorAddresses/geo)を単純プロキシ(クエリはそのまま転送)。
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, extname } from 'node:path';
+import { openRoads } from './lib/road-codec.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(root, 'public');
@@ -149,10 +150,78 @@ async function serveRailways(req, res, path) {
   res.end(JSON.stringify({ error: 'unknown railways endpoint' }));
 }
 
+// --- OSM道路 API (/api/roads) -----------------------------------------------------
+// scripts/fetch-osm-roads.mjs が生成する data/osm-roads-*.jrb(自作バイナリcodec)を
+// 起動後の初回アクセスで全部オンメモリに開き(lib/road-codec.mjs がグリッド索引を構築)、
+// ビューポートのbboxに交差するwayだけ部分デコードして返す。全国データを
+// ブラウザに丸ごと送らないための、このリポジトリ内で完結する小さなタイルサーバ相当。
+//   GET /api/roads/meta                              … 読み込んだ地域・クラス・件数
+//   GET /api/roads?bbox=lon0,lat0,lon1,lat1&classes=primary,…&limit=4000
+let roadsHandles = null;   // [{region, handle}]
+async function roads() {
+  if (!roadsHandles) {
+    roadsHandles = [];
+    const dataDir = join(root, 'data');
+    let files = [];
+    try { files = (await readdir(dataDir)).filter((f) => /^osm-roads-.*\.jrb$/.test(f)); } catch { /* dataDir無し */ }
+    for (const f of files) {
+      try {
+        const handle = openRoads(await readFile(join(dataDir, f)));
+        roadsHandles.push({ file: f, handle });
+        console.log(`  roads: ${f} loaded (${handle.count.toLocaleString()} ways, region=${handle.meta.region})`);
+      } catch (e) {
+        console.error(`  roads: ${f} 読み込み失敗: ${e.message}`);
+      }
+    }
+  }
+  return roadsHandles;
+}
+
+async function serveRoads(req, res, path) {
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+  const q = new URL(req.url, 'http://x').searchParams;
+  const handles = await roads();
+  const send = (obj) => { res.writeHead(200, headers); res.end(JSON.stringify(obj)); };
+  if (!handles.length) {
+    res.writeHead(404, headers);
+    res.end(JSON.stringify({ error: 'osm-roads-*.jrb が無い。先に `npm run fetch:osm-roads -- --region <region>` を実行。' }));
+    return;
+  }
+  if (path === '/api/roads/meta') {
+    send({ regions: handles.map(({ file, handle }) => ({ file, ...handle.meta })) });
+    return;
+  }
+  const bboxRaw = (q.get('bbox') || '').split(',').map(Number);
+  if (bboxRaw.length !== 4 || bboxRaw.some((v) => !Number.isFinite(v))) {
+    res.writeHead(400, headers);
+    res.end(JSON.stringify({ error: 'bbox=lon0,lat0,lon1,lat1 が必要' }));
+    return;
+  }
+  const classNames = q.get('classes') ? q.get('classes').split(',') : null;
+  const limit = Math.min(20000, +(q.get('limit') || 4000));
+  const paths = [];
+  let truncated = false;
+  for (const { handle } of handles) {
+    const classFilter = classNames
+      ? new Set(classNames.map((c) => handle.meta.classLabels.indexOf(c)).filter((i) => i >= 0))
+      : null;
+    if (classFilter && classFilter.size === 0) continue;
+    const r = handle.queryBbox(bboxRaw, { classFilter, maxWays: limit - paths.length });
+    truncated = truncated || r.truncated;
+    for (const i of r.indices) {
+      const w = handle.decodeWay(i);
+      paths.push({ id: `${handle.meta.region}:${i}`, name: w.name, kind: handle.meta.classLabels[w.class], coords: w.coords });
+    }
+    if (paths.length >= limit) { truncated = true; break; }
+  }
+  send({ count: paths.length, truncated, paths });
+}
+
 const server = createServer(async (req, res) => {
   let path = (req.url || '/').split('?')[0];
   if (path === '/api/address-points') { serveAddressPoints(req, res); return; }
   if (path === '/api/railways' || path.startsWith('/api/railways/')) { serveRailways(req, res, path); return; }
+  if (path === '/api/roads' || path.startsWith('/api/roads/')) { serveRoads(req, res, path); return; }
   if (ALIASES[path]) path = ALIASES[path];
   const file = normalize(join(PUBLIC, path));
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); res.end(); return; }

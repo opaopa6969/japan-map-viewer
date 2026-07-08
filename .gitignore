@@ -4,3 +4,4 @@ node_modules/
 .env.local
 public/img/
 public/js/basemap.js
+data/*.jrb

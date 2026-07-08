@@ -199,9 +199,11 @@ async function serveRoads(req, res, path) {
   }
   const classNames = q.get('classes') ? q.get('classes').split(',') : null;
   const limit = Math.min(20000, +(q.get('limit') || 4000));
-  // 上限超過時は「bbox中心から近い順」で切り詰める(buildings側と同じ方針)
-  const cx = (bboxRaw[0] + bboxRaw[2]) / 2 * 1e5;
-  const cy = (bboxRaw[1] + bboxRaw[3]) / 2 * 1e5;
+  // 上限超過時は「注視点から近い順」で切り詰める(buildings側と同じ方針。center=推奨)
+  const centerRaw = (q.get('center') || '').split(',').map(Number);
+  const hasCenter = centerRaw.length === 2 && centerRaw.every(Number.isFinite);
+  const cx = (hasCenter ? centerRaw[0] : (bboxRaw[0] + bboxRaw[2]) / 2) * 1e5;
+  const cy = (hasCenter ? centerRaw[1] : (bboxRaw[1] + bboxRaw[3]) / 2) * 1e5;
   const candidates = [];
   for (const { handle } of handles) {
     const classFilter = classNames
@@ -267,10 +269,14 @@ async function serveBuildings(req, res, path) {
     return;
   }
   const limit = Math.min(20000, +(q.get('limit') || 3000));
-  // 上限超過時の切り詰めを「bbox中心から近い順」で行う(グリッド走査順の恣意的な
-  // 欠け=パンのたびに別の一角が消える現象を防ぎ、画面中心は常に埋まる)。
-  const cx = (bboxRaw[0] + bboxRaw[2]) / 2 * 1e5;
-  const cy = (bboxRaw[1] + bboxRaw[3]) / 2 * 1e5;
+  // 上限超過時の切り詰めを「注視点から近い順」で行う(グリッド走査順の恣意的な
+  // 欠け=パンのたびに別の一角が消える現象を防ぐ)。ピッチをつけたカメラでは
+  // getBounds()のbbox中心が地平線方向へ大きくズレるため、クライアントは
+  // center=lon,lat(map.getCenter()=実際の注視点)を渡すこと(無ければbbox中心)。
+  const centerRaw = (q.get('center') || '').split(',').map(Number);
+  const hasCenter = centerRaw.length === 2 && centerRaw.every(Number.isFinite);
+  const cx = (hasCenter ? centerRaw[0] : (bboxRaw[0] + bboxRaw[2]) / 2) * 1e5;
+  const cy = (hasCenter ? centerRaw[1] : (bboxRaw[1] + bboxRaw[3]) / 2) * 1e5;
   const candidates = [];
   for (const { handle } of handles) {
     const r = handle.queryBbox(bboxRaw, { maxWays: 80000 - candidates.length });

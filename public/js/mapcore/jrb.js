@@ -108,7 +108,11 @@ export function jrbToBuildingBinary(data, { defaultHeight = 0 } = {}) {
   const { meta, names } = jrb;
   const quant = meta.quant || 1e5;
   const n = meta.wayCount;
-  const total = meta.totalPoints || 0;
+  let total = meta.totalPoints || 0;
+  if (!total) {
+    // 旧ファイル(totalPoints導入前)互換: 1パスで数える(座標は読まないので軽い)
+    jrb.forEachWay((i, cls, nameIdx, value, count) => { total += count; });
+  }
   const positions = new Float64Array(total * 2);
   const startIndices = new Uint32Array(n + 1);
   const heights = new Float32Array(n);          // 建物ごと(統計/クリック用)

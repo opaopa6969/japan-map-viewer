@@ -459,7 +459,7 @@ async function loadBuildings() {
   const t0 = performance.now();
   // バイナリ経路: JRB wire(量子化+delta+varint) → ブラウザでデコード → deckのbinary attributesへ直行。
   // 全量(全関東/全国)はJRBファイル直送(サーバの再エンコードを踏まない)。読了後は自動📌固定。
-  const wholeRegion = limit >= 29100000 ? 'japan' : limit >= 6200000 ? 'kanto' : null;
+  const wholeRegion = limit >= 29100000 ? 'japan' : limit === 6200000 ? 'kanto' : null;   // 全量オプションだけ直送(10M等のbboxクエリを吸わない)
   const url = wholeRegion
     ? `/api/buildings/region/${wholeRegion}`
     : `/api/buildings?bbox=${pb.w},${pb.s},${pb.e},${pb.n}&center=${c0.lng},${c0.lat}&limit=${limit}&format=bin`;

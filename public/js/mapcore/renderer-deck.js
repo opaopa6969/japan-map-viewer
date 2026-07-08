@@ -106,7 +106,9 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
   const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer, PathLayer, SolidPolygonLayer, Tile3DLayer } = deckNS;
   const out = [];
   for (const spec of registry.list()) {
-    if (!spec.visible) continue;
+    // 非表示はdeckのvisibleプロパティで隠す。リストから外すとdeckがリソースを破棄し、
+    // 再表示のたびに全再テッセレーション+巨大バッファ再確保が走る(全国29Mで
+    // Array buffer allocation failed実測)。visible:falseなら保持したまま描画スキップ。
     const st = spec.style;
     if (spec.type === 'polygons') {
       if (spec.data.binary) {
@@ -164,6 +166,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
         for (const chunk of b._chunks) {
           out.push(new SolidPolygonLayer({
             id: `L|${spec.id}|polygons|${chunk.base}`,
+          visible: spec.visible,
             data: chunk.data,
             _normalize: false,
             // 重要: 既定はXYZ(頂点=3要素)。XY詰めなので明示しないと頂点が3個ずつ
@@ -179,6 +182,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       } else {
         out.push(new SolidPolygonLayer({
           id: `L|${spec.id}|polygons`,
+          visible: spec.visible,
           data: spec.data.polygons,
           extruded: true,
           getPolygon: (p) => p.ring,
@@ -193,6 +197,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       if (Tile3DLayer) {
         out.push(new Tile3DLayer({
           id: `L|${spec.id}|tiles3d`,
+          visible: spec.visible,
           data: spec.data.url,
           opacity: st.opacity ?? 1,
           pickable: spec.pickable,
@@ -201,6 +206,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
     } else if (spec.type === 'paths') {
       out.push(new PathLayer({
         id: `L|${spec.id}|paths`,
+          visible: spec.visible,
         data: spec.data.paths,
         getPath: (p) => p.coords,
         getColor: (p) => hexToRgb(p.color || st.color || '#7a8aa0').concat(st.opacity ?? 200),
@@ -216,6 +222,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
         .filter((e) => e.a && e.b);
       out.push(new LineLayer({
         id: `L|${spec.id}|edges`,
+          visible: spec.visible,
         data: edges,
         getSourcePosition: (e) => [e.a.lon, e.a.lat],
         getTargetPosition: (e) => [e.b.lon, e.b.lat],
@@ -226,6 +233,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       }));
       out.push(new ScatterplotLayer({
         id: `L|${spec.id}|nodes`,
+          visible: spec.visible,
         data: spec.data.nodes,
         getPosition: (n) => [n.lon, n.lat],
         getFillColor: (n) => hexToRgb(n.color || st.nodeColor || '#e8c468'),
@@ -236,6 +244,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       if (st.showLabels) {
         out.push(new TextLayer({
           id: `L|${spec.id}|labels`,
+          visible: spec.visible,
           data: spec.data.nodes.filter((n) => n.label),
           getPosition: (n) => [n.lon, n.lat],
           getText: (n) => n.label,
@@ -250,6 +259,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       const maxV = spec.data.points.reduce((m, p) => Math.max(m, p.value || 0), 0) || 1;
       out.push(new ColumnLayer({
         id: `L|${spec.id}|columns`,
+          visible: spec.visible,
         data: spec.data.points,
         diskResolution: 12,
         radius: st.radius ?? 6000,
@@ -264,6 +274,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
     } else if (spec.type === 'markers') {
       out.push(new TextLayer({
         id: `L|${spec.id}|icons`,
+          visible: spec.visible,
         data: spec.data.points,
         getPosition: (p) => [p.lon, p.lat],
         getText: (p) => p.icon || '📍',
@@ -274,6 +285,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       if (st.showLabels !== false) {
         out.push(new TextLayer({
           id: `L|${spec.id}|labels`,
+          visible: spec.visible,
           data: spec.data.points.filter((p) => p.label),
           getPosition: (p) => [p.lon, p.lat],
           getText: (p) => p.label,
@@ -289,6 +301,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       const placed = spec.data.tokens.map((tk) => ({ ...tk, _pos: moverPosition(tk, tNow) }));
       out.push(new ScatterplotLayer({
         id: `L|${spec.id}|halo`,
+          visible: spec.visible,
         data: placed,
         getPosition: (t) => [t._pos.lon, t._pos.lat, t._pos.alt],
         getFillColor: hexToRgb(st.haloColor || '#ffffff').concat(60),
@@ -297,6 +310,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
       }));
       out.push(new TextLayer({
         id: `L|${spec.id}|icons`,
+          visible: spec.visible,
         data: placed,
         getPosition: (t) => [t._pos.lon, t._pos.lat, t._pos.alt],
         getText: (t) => t.icon || '🚄',

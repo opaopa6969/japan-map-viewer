@@ -555,8 +555,13 @@ setInterval(() => {
   const f = dbg.lastFetch;
   const layers = renderer.getLayers().filter((l) => l.visible).map((l) => l.id).join(' ');
   const m = dbg.metrics;
+  const map0 = renderer.getMap();
+  const cv = map0.getCanvas();
+  const ct = map0.getCenter();
   const lines = [
     `${dbg.hw.gpu}  |  ${dbg.hw.cpu}`,
+    `map z${map0.getZoom().toFixed(2)} c(${ct.lng.toFixed(2)},${ct.lat.toFixed(2)}) p${map0.getPitch().toFixed(0)} b${map0.getBearing().toFixed(0)}`
+      + `  dpr ${window.devicePixelRatio}  canvas ${cv.clientWidth}x${cv.clientHeight}css/${cv.width}x${cv.height}px`,
     `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms`,
     m ? `deck CPU ${m.cpuTimePerFrame != null ? m.cpuTimePerFrame.toFixed(2) : '-'}ms/f  GPU ${m.gpuTimePerFrame != null && m.gpuTimePerFrame > 0 ? m.gpuTimePerFrame.toFixed(2) + 'ms/f' : '(timer query非対応)'}` : 'deck metrics: 取得待ち…',
     m && m.gpuMemory ? `GPUメモリ(推定) ${(m.gpuMemory / 1e6).toFixed(0)}MB (buf ${(m.bufferMemory / 1e6).toFixed(0)} / tex ${(m.textureMemory / 1e6).toFixed(0)})` : '',

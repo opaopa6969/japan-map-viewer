@@ -5,3 +5,4 @@ node_modules/
 public/img/
 public/js/basemap.js
 data/*.jrb
+public/data/plateau/

@@ -63,7 +63,7 @@ const buf = encodeRoads({
 
 // ----- 旧ファイル互換: totalPoints無しでもフォールバック走査で正しく変換 ------------
 {
-  const legacy = encodeRoads({ ...OPTS, classLabels: ['building'], ways: WAYS.slice(0, 2), withValues: true,
+  const legacy = encodeRoads({ region: 'wire', source: 'unit', classLabels: ['building'], ways: WAYS.slice(0, 2), withValues: true,
     extraMeta: { totalPoints: undefined } });   // undefinedはJSON化で落ちる=旧ファイル相当
   const jrb = decodeJrb(new Uint8Array(legacy));
   ok(jrb.meta.totalPoints === undefined, '旧ファイル相当(totalPoints無し)を用意できた');

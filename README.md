@@ -153,7 +153,15 @@ const model = createMapModel(await (await fetch('/api/address-points')).json());
 const renderer = createRendererDeck(container, { model, onPick });
 ```
 
+## ドキュメント
+
+- [docs/design.md](./docs/design.md) — 設計契約(mapcore/レイヤーspec/JRB codec/API/割り切り)
+- [docs/data-sources.md](./docs/data-sources.md) — **データソースカタログ**(全14種の出どころ・
+  ライセンス・形式・使い方。新データはここに追記)
+- [issue #1](https://github.com/opaopa6969/japan-map-viewer/issues/1) — レイヤー機構の設計経緯と受け入れ条件
+
 ## データ出典
 
-国土数値情報(行政区域)・e-Stat(住宅・土地統計/市区町村配置分合)・地価公示・地理院タイル・CARTO。
-詳細は各 fetch スクリプト冒頭のコメントを参照。
+OpenStreetMap contributors(ODbL)・国土数値情報(鉄道N02/高速道路N06/地価公示L01)・
+Project PLATEAU・e-Stat・地理院タイル/DEM・CARTO・GeoNames。
+詳細は [docs/data-sources.md](./docs/data-sources.md) と各 fetch スクリプト冒頭のコメントを参照。

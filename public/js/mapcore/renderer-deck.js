@@ -90,6 +90,10 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
             },
           },
           _normalize: false,
+          // 重要: 既定はXYZ(頂点=3要素)。うちのpositionsはXY詰めなので明示しないと
+          // 頂点が3個ずつズレて読まれ「三角形の建物」だらけになる(実測)。
+          positionFormat: 'XY',
+          _windingOrder: 'CW',   // jrb.jsのデコーダがCW正規化済み
           extruded: true,
           elevationScale: st.heightScale ?? 1,
           getFillColor: hexToRgb(st.color || '#8d99ae').concat(st.opacity ?? 230),

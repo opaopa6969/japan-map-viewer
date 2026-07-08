@@ -410,7 +410,18 @@ let bldMoveHandler = null;
 let lastBuildingBinary = null;
 async function loadBuildings() {
   const map = renderer.getMap();
-  if (map.getZoom() < 14) { renderer.setLayerVisible('buildings', false); $('loadnote').style.display = 'none'; return; }
+  // zoomゲートは上限連動: 大口指定ほど広い画角(低zoom)まで許す。
+  // z14固定だと視界に50万棟も入らず、上限を上げても意味がなかった(実測159k)。
+  const limitSel = +$('bld-limit').value;
+  const minZ = limitSel >= 500000 ? 10.5 : limitSel >= 120000 ? 12 : 14;
+  if (map.getZoom() < minZ) {
+    renderer.setLayerVisible('buildings', false);
+    const el = $('loadnote');
+    el.textContent = `建物: zoom ${minZ}+ で表示(現在 ${map.getZoom().toFixed(1)})`;
+    el.style.display = 'block';
+    return;
+  }
+  { const el = $('loadnote'); el.textContent = '建物: 取得中…'; el.style.display = 'block'; }
   const b = map.getBounds();
   const c0 = map.getCenter();   // ピッチ時はbbox中心が地平線側へズレるため注視点を明示
   const limit = +$('bld-limit').value;

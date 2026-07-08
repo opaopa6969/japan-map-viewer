@@ -83,6 +83,15 @@
     </div>
 
     <div class="group">
+      <h2>🦅 グランドツアー</h2>
+      <button class="btn" id="tour-btn">🦅 ツアー開始(録画つき)</button>
+      <label class="chk row"><input type="checkbox" id="tour-rec" checked> 🎥 webm録画(終了時DL)</label>
+      <label class="chk row"><input type="checkbox" id="tour-blur" checked> 🌪 残像モーションブラー</label>
+      <p class="sub" id="tour-note">日本全景→隼の急降下→実道路をドリフト疾走→上昇、を13ストップ(東京4名所+全国)。
+        建物は事前に「全国+📌固定」推奨</p>
+    </div>
+
+    <div class="group">
       <h2>カメラ・演出</h2>
       <button class="btn" id="focus-tokyo">🎯 focusOn: 東京</button>
       <button class="btn" id="focus-osaka">🎯 focusOn: 大阪</button>
@@ -140,6 +149,7 @@
 <script type="module">
 import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
 import { jrbToBuildingChunks } from '/js/mapcore/jrb.js';
+import { createTourPlayer } from '/js/mapcore/tour.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -628,6 +638,107 @@ $('dbg-on').addEventListener('change', (e) => {
 $('bld-limit').addEventListener('change', () => { if ($('ly-buildings').checked) loadBuildings(); });
 $('base-labels').addEventListener('change', (e) => renderer.setLabels(e.target.checked));
 
+// --- 🦅 グランドツアー: tour file再生+実道路ルート+録画 ---------------------------
+// クルーズ路: 都市周辺の実道路(OSM)を端点マッチで1本に連結して「道路を縫う」コースにする
+async function getTourRoute(city) {
+  const dLat = 0.018;   // ≈2km
+  const dLon = 0.018 / Math.cos(city.lat * Math.PI / 180);
+  const res = await fetch(`/api/roads?bbox=${city.lon - dLon},${city.lat - dLat},${city.lon + dLon},${city.lat + dLat}`
+    + `&center=${city.lon},${city.lat}&classes=trunk,primary,secondary&limit=1500`);
+  const r = await res.json();
+  if (r.error || !r.paths || !r.paths.length) return null;
+  const chain = stitchFrom(r.paths.map((p) => p.coords), [city.lon, city.lat]);
+  return chain.length >= 2 ? chain : null;
+}
+
+let tour = null;
+let tourRecorder = null;
+
+// 残像モーションブラー: 合成キャンバスに前フレームを残しつつ新フレームを半透明で重ねる。
+// CSSフィルタはcaptureStreamに写らないため、この合成キャンバス自体を表示・録画する。
+// WebGLバッファはフレーム外で読むと空になるので map.on('render') のタイミングで合成する。
+let blurCanvas = null;
+let blurHandler = null;
+function startTourBlur() {
+  const map = renderer.getMap();
+  const src = map.getCanvas();
+  blurCanvas = document.createElement('canvas');
+  blurCanvas.width = src.width;
+  blurCanvas.height = src.height;
+  blurCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:15;pointer-events:none;';
+  $('main').appendChild(blurCanvas);
+  const ctx = blurCanvas.getContext('2d');
+  blurHandler = () => {
+    if (blurCanvas.width !== src.width || blurCanvas.height !== src.height) {
+      blurCanvas.width = src.width;
+      blurCanvas.height = src.height;
+    }
+    // フェーズで残像の濃さを変える(疾走/急降下ほど流れる)
+    const phase = tour ? tour.state.phase : null;
+    const a = phase === 'cruise' ? 0.42 : (phase === 'dive' || phase === 'climb') ? 0.5 : 0.9;
+    ctx.globalAlpha = a;
+    ctx.drawImage(src, 0, 0);
+  };
+  map.on('render', blurHandler);
+}
+function stopTourBlur() {
+  if (blurHandler) { renderer.getMap().off('render', blurHandler); blurHandler = null; }
+  if (blurCanvas) { blurCanvas.remove(); blurCanvas = null; }
+}
+
+function startTourRecording() {
+  try {
+    const canvas = blurCanvas || renderer.getMap().getCanvas();
+    const stream = canvas.captureStream(60);
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    const chunksRec = [];
+    tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 20e6 });
+    tourRecorder.ondataavailable = (e) => { if (e.data.size) chunksRec.push(e.data); };
+    tourRecorder.onstop = () => {
+      const blob = new Blob(chunksRec, { type: 'video/webm' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `japan-grand-tour-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+      tourRecorder = null;
+    };
+    tourRecorder.start(1000);
+  } catch (e) {
+    showPopup(`<b>録画開始に失敗</b><br><span class="k">${e.message}(ツアーは続行)</span>`, { x: 40, y: 40 });
+  }
+}
+function stopTour() {
+  if (tour) { tour.stop(); tour = null; }
+  if (tourRecorder && tourRecorder.state !== 'inactive') tourRecorder.stop();
+  stopTourBlur();
+  $('tour-btn').textContent = '🦅 ツアー開始(録画つき)';
+  $('tour-btn').classList.remove('active');
+}
+$('tour-btn').addEventListener('click', async () => {
+  if (tour) { stopTour(); return; }
+  const spec = await (await fetch('/data/tours/japan-grand-tour.json')).json();
+  $('bld-pin').checked = true;   // ツアー中のmoveend再取得を止める(カクつき防止)
+  if ($('tour-blur').checked) startTourBlur();
+  if ($('tour-rec').checked) startTourRecording();   // ブラー有効時は合成キャンバスを録画
+  tour = createTourPlayer(renderer, spec, {
+    getRoute: getTourRoute,
+    onPhase: (phase, city) => {
+      const el = $('loadnote');
+      const label = { dive: '🦅 急降下', cruise: '🏎 疾走中', climb: '🚀 上昇' }[phase] || phase;
+      el.textContent = city ? `ツアー: ${label} — ${city.name}` : `ツアー: ${label}`;
+      el.style.display = 'block';
+    },
+    onDone: () => {
+      $('loadnote').textContent = 'ツアー終了🏁 (録画がDLされます)';
+      stopTour();
+    },
+  });
+  tour.start();
+  $('tour-btn').textContent = '⏹ ツアー停止';
+  $('tour-btn').classList.add('active');
+});
+
 // ドームセレクタ(🔦): 地図中心+半径Rで建物を選択し、円環+統計(件数/最高/平均)を出す。
 // 「上限切り詰めの円盤(under the dome)」が地域セレクタとして案外良かったので正式機能化。
 let domeMoveHandler = null;
@@ -706,17 +817,16 @@ $('dome-r').addEventListener('input', () => {
   if ($('ly-dome').checked) loadDome();
 });
 
-// 区間(LineString断片)を端点マッチで1本に繋ぐ(貪欲・許容≈300m)
-function stitch(segs) {
+// 区間(LineString断片)を端点マッチで1本に繋ぐ(貪欲・許容≈300m)。origin=開始点
+function stitchFrom(segs, origin) {
   const d2 = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
-  const TOKYO = [139.7671, 35.6812];
   const used = new Set();
   let bi = 0;
   let brev = false;
   let bd = Infinity;
   segs.forEach((s, i) => {
-    if (d2(s[0], TOKYO) < bd) { bd = d2(s[0], TOKYO); bi = i; brev = false; }
-    if (d2(s[s.length - 1], TOKYO) < bd) { bd = d2(s[s.length - 1], TOKYO); bi = i; brev = true; }
+    if (d2(s[0], origin) < bd) { bd = d2(s[0], origin); bi = i; brev = false; }
+    if (d2(s[s.length - 1], origin) < bd) { bd = d2(s[s.length - 1], origin); bi = i; brev = true; }
   });
   let chain = brev ? [...segs[bi]].reverse() : [...segs[bi]];
   used.add(bi);
@@ -760,7 +870,7 @@ $('shinkansen').onclick = async (e) => {
   }
   // メタデータAPIで東海道新幹線のジオメトリ+駅を引く
   const line = await (await fetch('/api/railways/line?name=' + encodeURIComponent('東海道新幹線'))).json();
-  const chain = stitch(line.sections.map((s) => s.coords));
+  const chain = stitchFrom(line.sections.map((s) => s.coords), [139.7671, 35.6812]);
   renderer.addLayer({
     id: 'shink-path', type: 'paths', zIndex: 3,
     data: { paths: [{ id: 'tokaido', coords: chain, color: '#e15759', name: '東海道新幹線' }] },

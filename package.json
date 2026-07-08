@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/layers-test.mjs && node test/road-codec-test.mjs && node test/jrb-test.mjs",
+    "test": "node test/layers-test.mjs && node test/road-codec-test.mjs && node test/jrb-test.mjs && node test/tour-test.mjs",
     "fetch:map": "node scripts/fetch-map-data.mjs && node scripts/fetch-land-prices.mjs",
     "fetch:basemap": "node scripts/fetch-basemap.mjs",
     "fetch:vacancy": "node scripts/fetch-estat-vacancy.mjs",

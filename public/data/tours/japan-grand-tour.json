@@ -1,0 +1,23 @@
+{
+  "name": "japan-grand-tour",
+  "description": "日本全景から隼の急降下→実道路をドリフト疾走→上昇して次へ。東京4名所+全国横断の13ストップ。",
+  "overview": { "zoom": 5.8, "pitch": 35 },
+  "cruise":   { "zoom": 15.9, "pitch": 67, "speed": 62, "lookAhead": 85, "bearingLag": 2.2 },
+  "dive":     { "gravity": 3.2, "maxVz": 3.6, "flare": 8, "steer": 2.4 },
+  "climb":    { "boost": 2.4, "maxVz": 3.0 },
+  "cities": [
+    { "name": "東京・丸の内",   "lat": 35.6812, "lon": 139.7671, "cruiseSec": 30 },
+    { "name": "東京・新宿",     "lat": 35.6896, "lon": 139.7006, "cruiseSec": 20 },
+    { "name": "東京・渋谷",     "lat": 35.6580, "lon": 139.7016, "cruiseSec": 20 },
+    { "name": "東京・秋葉原",   "lat": 35.6984, "lon": 139.7731, "cruiseSec": 20 },
+    { "name": "札幌・すすきの", "lat": 43.0555, "lon": 141.3524, "cruiseSec": 30 },
+    { "name": "仙台",           "lat": 38.2682, "lon": 140.8694, "cruiseSec": 25 },
+    { "name": "金沢",           "lat": 36.5613, "lon": 136.6562, "cruiseSec": 25 },
+    { "name": "京都",           "lat": 35.0116, "lon": 135.7681, "cruiseSec": 30 },
+    { "name": "大阪・梅田",     "lat": 34.7025, "lon": 135.4959, "cruiseSec": 30 },
+    { "name": "神戸",           "lat": 34.6913, "lon": 135.1830, "cruiseSec": 25 },
+    { "name": "広島",           "lat": 34.3853, "lon": 132.4553, "cruiseSec": 25 },
+    { "name": "福岡・天神",     "lat": 33.5902, "lon": 130.4017, "cruiseSec": 30 },
+    { "name": "東京(帰還)",     "lat": 35.6812, "lon": 139.7671, "cruiseSec": 20 }
+  ]
+}

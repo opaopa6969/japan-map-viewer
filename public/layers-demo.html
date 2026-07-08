@@ -623,7 +623,7 @@ setInterval(() => {
     `${dbg.hw.gpu}  |  ${dbg.hw.cpu}`,
     `map z${map0.getZoom().toFixed(2)} c(${ct.lng.toFixed(2)},${ct.lat.toFixed(2)}) p${map0.getPitch().toFixed(0)} b${map0.getBearing().toFixed(0)}`
       + `  dpr ${window.devicePixelRatio}  canvas ${cv.clientWidth}x${cv.clientHeight}css/${cv.width}x${cv.height}px`,
-    `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms`,
+    `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms${dbg.blurMs != null ? `  blur ${dbg.blurMs.toFixed(1)}ms/copy` : ''}`,
     m ? `deck CPU ${m.cpuTimePerFrame != null ? m.cpuTimePerFrame.toFixed(2) : '-'}ms/f  GPU ${m.gpuTimePerFrame != null && m.gpuTimePerFrame > 0 ? m.gpuTimePerFrame.toFixed(2) + 'ms/f' : '(timer query非対応)'}` : 'deck metrics: 取得待ち…',
     m && m.gpuMemory ? `GPUメモリ(推定) ${(m.gpuMemory / 1e6).toFixed(0)}MB (buf ${(m.bufferMemory / 1e6).toFixed(0)} / tex ${(m.textureMemory / 1e6).toFixed(0)})` : '',
     f ? `${f.kind} ${f.count.toLocaleString()}件  頂点 ${f.verts.toLocaleString()}` : '(まだfetchなし)',
@@ -670,7 +670,11 @@ function startTourBlur() {
   blurCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:15;pointer-events:none;';
   $('main').appendChild(blurCanvas);
   const ctx = blurCanvas.getContext('2d');
+  let lastComposite = 0;
   blurHandler = () => {
+    const now = performance.now();
+    if (now - lastComposite < 33) return;   // 合成は30fpsに間引く(コピーのGPU同期コスト削減)
+    lastComposite = now;
     const w = Math.round(src.width * SCALE);
     const h = Math.round(src.height * SCALE);
     if (blurCanvas.width !== w || blurCanvas.height !== h) {
@@ -681,7 +685,9 @@ function startTourBlur() {
     const phase = tour ? tour.state.phase : null;
     const a = phase === 'cruise' ? 0.42 : (phase === 'dive' || phase === 'climb') ? 0.5 : 0.9;
     ctx.globalAlpha = a;
+    const t0c = performance.now();
     ctx.drawImage(src, 0, 0, blurCanvas.width, blurCanvas.height);
+    dbg.blurMs = performance.now() - t0c;   // WebGL→2Dコピーの同期コスト(犯人特定用)
   };
   map.on('render', blurHandler);
 }
@@ -717,6 +723,8 @@ function startTourRecording() {
 }
 function stopTour() {
   if (tour) { tour.stop(); tour = null; }
+  renderer.removeLayer('tour-bld');
+  renderer.setLayerVisible('buildings', $('ly-buildings').checked);
   if (tourRecorder && tourRecorder.state !== 'inactive') tourRecorder.stop();
   stopTourBlur();
   const m0 = renderer.getMap();
@@ -738,13 +746,34 @@ $('tour-btn').addEventListener('click', async () => {
   }
   if ($('tour-blur').checked) startTourBlur();
   if ($('tour-rec').checked) startTourRecording();   // ブラー有効時は合成キャンバスを録画
+  let tourBldPromise = null;
   tour = createTourPlayer(renderer, spec, {
     getRoute: getTourRoute,
-    onPhase: (phase, city) => {
+    onPhase: async (phase, city) => {
       const el = $('loadnote');
       const label = { dive: '🦅 急降下', cruise: '🏎 疾走中', climb: '🚀 上昇' }[phase] || phase;
       el.textContent = city ? `ツアー: ${label} — ${city.name}` : `ツアー: ${label}`;
       el.style.display = 'block';
+      // 画面外の建物も毎フレーム頂点演算される(deckはカリングしない)ため、
+      // 疾走中はメガ建物レイヤーを外し、都市周辺(半径2.5km)だけの軽量版に差し替える。
+      if (phase === 'dive' && city) {
+        tourBldPromise = fetch(`/api/buildings?center=${city.lon},${city.lat}&radius=2500&limit=80000&format=bin`)
+          .then((r) => (r.ok ? r.arrayBuffer() : null))
+          .then((ab) => (ab ? jrbToBuildingChunks(ab, { defaultHeight: 8, withNames: false }) : null))
+          .catch(() => null);
+      } else if (phase === 'cruise') {
+        const bin = await tourBldPromise;
+        if (bin && tour) {
+          const data = { binary: { chunks: bin.chunks } };
+          if (renderer.getLayers().some((l) => l.id === 'tour-bld')) renderer.updateLayerData('tour-bld', data);
+          else renderer.addLayer({ id: 'tour-bld', type: 'polygons', zIndex: 6, data, style: { color: '#8d99ae', opacity: 230 } });
+          renderer.setLayerVisible('tour-bld', true);
+          renderer.setLayerVisible('buildings', false);   // 29M級はGPU演算から外す
+        }
+      } else if (phase === 'climb') {
+        renderer.setLayerVisible('tour-bld', false);
+        renderer.setLayerVisible('buildings', $('ly-buildings').checked);   // 俯瞰では戻す
+      }
     },
     onDone: () => {
       $('loadnote').textContent = 'ツアー終了🏁 (録画がDLされます)';

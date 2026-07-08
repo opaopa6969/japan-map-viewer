@@ -78,28 +78,55 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
         // binary attributes経路(mapcore/jrb.js の jrbToBuildingBinary 出力)。
         // 100万棟級: JSONもオブジェクト走査も無しでフラット配列がGPUへ直行する。
         // ring向きはデコーダがCW正規化済み(_windingOrder既定と一致)。
+        //
+        // 1レイヤーに詰め込みすぎると壁面ジオメトリのインデックスが内部限界を超えて
+        // 巻き戻り、遠隔頂点同士が繋がる巨大三角形が出る(全国2,900万棟=1.86億頂点で実測)。
+        // 600万頂点ごとにチャンク分割し、分割結果はdataオブジェクトにキャッシュする
+        // (毎フレームのdraw()で参照が変わるとdeckが再アップロードしてしまうため)。
         const b = spec.data.binary;
-        out.push(new SolidPolygonLayer({
-          id: `L|${spec.id}|polygons`,
-          data: {
-            length: b.length,
-            startIndices: b.startIndices,
-            attributes: {
-              getPolygon: { value: b.positions, size: 2 },
-              // binary attributeは頂点ごと。建物ごと(heights)でなくheightsV(頂点展開済み)を渡す
-              getElevation: { value: b.heightsV || b.heights, size: 1 },
-            },
-          },
-          _normalize: false,
-          // 重要: 既定はXYZ(頂点=3要素)。うちのpositionsはXY詰めなので明示しないと
-          // 頂点が3個ずつズレて読まれ「三角形の建物」だらけになる(実測)。
-          positionFormat: 'XY',
-          _windingOrder: 'CW',   // jrb.jsのデコーダがCW正規化済み
-          extruded: true,
-          elevationScale: st.heightScale ?? 1,
-          getFillColor: hexToRgb(st.color || '#8d99ae').concat(st.opacity ?? 230),
-          pickable: spec.pickable,
-        }));
+        if (!b._chunks) {
+          const VMAX = 6000000;
+          const heightsSrc = b.heightsV || b.heights;
+          b._chunks = [];
+          let s = 0;
+          while (s < b.length) {
+            const vStart = b.startIndices[s];
+            let e = s;
+            while (e < b.length && b.startIndices[e + 1] - vStart <= VMAX) e++;
+            if (e === s) e = s + 1;   // 1棟でVMAX超は無い想定の保険
+            const vEnd = b.startIndices[e];
+            const si = new Uint32Array(e - s + 1);
+            for (let i = 0; i <= e - s; i++) si[i] = b.startIndices[s + i] - vStart;
+            b._chunks.push({
+              base: s,
+              data: {
+                length: e - s,
+                startIndices: si,
+                attributes: {
+                  getPolygon: { value: b.positions.subarray(vStart * 2, vEnd * 2), size: 2 },
+                  // binary attributeは頂点ごと。建物ごと(heights)でなくheightsV(頂点展開済み)
+                  getElevation: { value: heightsSrc.subarray(vStart, vEnd), size: 1 },
+                },
+              },
+            });
+            s = e;
+          }
+        }
+        for (const chunk of b._chunks) {
+          out.push(new SolidPolygonLayer({
+            id: `L|${spec.id}|polygons|${chunk.base}`,
+            data: chunk.data,
+            _normalize: false,
+            // 重要: 既定はXYZ(頂点=3要素)。XY詰めなので明示しないと頂点が3個ずつ
+            // ズレて読まれ「三角形の建物」だらけになる(実測)。
+            positionFormat: 'XY',
+            _windingOrder: 'CW',   // jrb.jsのデコーダがCW正規化済み
+            extruded: true,
+            elevationScale: st.heightScale ?? 1,
+            getFillColor: hexToRgb(st.color || '#8d99ae').concat(st.opacity ?? 230),
+            pickable: spec.pickable,
+          }));
+        }
       } else {
         out.push(new SolidPolygonLayer({
           id: `L|${spec.id}|polygons`,
@@ -283,7 +310,10 @@ export function createRendererDeck(container, opts = {}) {
     const lid = info && info.layer && String(info.layer.id || '');
     if (!lid || !lid.startsWith('L|')) return;
     const spec = registry.get(lid.split('|')[1]);
-    if (spec && spec.onPick) spec.onPick(info.object ?? null, { layerId: spec.id, x: info.x, y: info.y, index: info.index });
+    if (spec && spec.onPick) {
+      const base = +(lid.split('|')[3] || 0);   // binaryチャンクのオフセット(無ければ0)
+      spec.onPick(info.object ?? null, { layerId: spec.id, x: info.x, y: info.y, index: info.index >= 0 ? info.index + base : info.index });
+    }
   }
 
   const overlay = new deck.MapboxOverlay({

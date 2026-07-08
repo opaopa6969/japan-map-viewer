@@ -8,6 +8,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, extname } from 'node:path';
 import { openRoads } from './lib/road-codec.mjs';
+import { gzipSync } from 'node:zlib';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(root, 'public');
@@ -150,6 +151,20 @@ async function serveRailways(req, res, path) {
   res.end(JSON.stringify({ error: 'unknown railways endpoint' }));
 }
 
+// 大きいJSONレスポンス用: クライアントが許せばgzip(建物数万棟=数十MB級を1/5前後に)。
+function sendJsonMaybeGzip(req, res, headers, obj) {
+  const body = JSON.stringify(obj);
+  const accept = String(req.headers['accept-encoding'] || '');
+  if (body.length > 512 * 1024 && accept.includes('gzip')) {
+    const gz = gzipSync(Buffer.from(body, 'utf8'));
+    res.writeHead(200, { ...headers, 'Content-Encoding': 'gzip', 'Content-Length': gz.length });
+    res.end(gz);
+    return;
+  }
+  res.writeHead(200, headers);
+  res.end(body);
+}
+
 // --- OSM道路 API (/api/roads) -----------------------------------------------------
 // scripts/fetch-osm-roads.mjs が生成する data/osm-roads-*.jrb(自作バイナリcodec)を
 // 起動後の初回アクセスで全部オンメモリに開き(lib/road-codec.mjs がグリッド索引を構築)、
@@ -181,7 +196,7 @@ async function serveRoads(req, res, path) {
   const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
   const q = new URL(req.url, 'http://x').searchParams;
   const handles = await roads();
-  const send = (obj) => { res.writeHead(200, headers); res.end(JSON.stringify(obj)); };
+  const send = (obj) => sendJsonMaybeGzip(req, res, headers, obj);
   if (!handles.length) {
     res.writeHead(404, headers);
     res.end(JSON.stringify({ error: 'osm-roads-*.jrb が無い。先に `npm run fetch:osm-roads -- --region <region>` を実行。' }));
@@ -198,7 +213,7 @@ async function serveRoads(req, res, path) {
     return;
   }
   const classNames = q.get('classes') ? q.get('classes').split(',') : null;
-  const limit = Math.min(20000, +(q.get('limit') || 4000));
+  const limit = Math.min(200000, +(q.get('limit') || 4000));
   // 上限超過時は「注視点から近い順」で切り詰める(buildings側と同じ方針。center=推奨)
   const centerRaw = (q.get('center') || '').split(',').map(Number);
   const center = (centerRaw.length === 2 && centerRaw.every(Number.isFinite))
@@ -247,7 +262,7 @@ async function serveBuildings(req, res, path) {
   const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
   const q = new URL(req.url, 'http://x').searchParams;
   const handles = await buildings();
-  const send = (obj) => { res.writeHead(200, headers); res.end(JSON.stringify(obj)); };
+  const send = (obj) => sendJsonMaybeGzip(req, res, headers, obj);
   if (!handles.length) {
     res.writeHead(404, headers);
     res.end(JSON.stringify({ error: 'osm-buildings-*.jrb が無い。先に `npm run fetch:osm-buildings -- --region <region>` を実行。' }));
@@ -274,7 +289,7 @@ async function serveBuildings(req, res, path) {
     res.end(JSON.stringify({ error: 'bbox=lon0,lat0,lon1,lat1 か center=lon,lat&radius=m が必要' }));
     return;
   }
-  const limit = Math.min(20000, +(q.get('limit') || 3000));
+  const limit = Math.min(200000, +(q.get('limit') || 3000));
   // 上限超過時の切り詰めは「注視点から近い順」(codecのqueryBboxがセル走査から中心優先)。
   // ピッチをつけたカメラではgetBounds()のbbox中心が地平線方向へ大きくズレるため、
   // クライアントは center=lon,lat(map.getCenter()=実際の注視点)を渡すこと。

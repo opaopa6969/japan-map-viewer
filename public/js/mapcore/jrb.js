@@ -94,7 +94,20 @@ export function decodeJrb(data) {
     return { class: cls, name: nIdx ? names[nIdx - 1] : null, value, coords };
   }
 
-  return { meta, names, count: meta.wayCount, decodeWay, forEachWay };
+  /** ヘッダだけ読む(offsets表で直ジャンプ、座標は読まない)。チャンク計画用。 */
+  function headerOf(i) {
+    let p = waysStart + offsets[i];
+    const cls = u8[p++];
+    let nIdx;
+    [nIdx, p] = readVarint(u8, p);
+    let value = 0;
+    if (hasValues) [value, p] = readVarint(u8, p);
+    let count;
+    [count, p] = readVarint(u8, p);
+    return { cls, nameIdx: nIdx - 1, value, count };
+  }
+
+  return { meta, names, count: meta.wayCount, decodeWay, forEachWay, headerOf };
 }
 
 /**
@@ -156,4 +169,96 @@ export function jrbToBuildingBinary(data, { defaultHeight = 0 } = {}) {
   });
   startIndices[n] = vp;
   return { length: n, startIndices, positions, heights, heightsV, names: outNames, meta };
+}
+
+/**
+ * 建物用・チャンク分割版: 全国2,900万棟級で positions 3GB の一枚岩確保が
+ * ChromeのArrayBuffer上限で失敗するため、maxVerts(既定600万頂点)ごとの
+ * 独立チャンク(各~100MB)としてデコードする。deckレンダラはchunksをそのまま
+ * レイヤー分割に使う。1パス目=ヘッダのみで点数収集(offsets表でO(n))、
+ * 2パス目=1回のforEachWayで各チャンクへ充填(二度デコードしない)。
+ * @returns { chunks: [{base, length, startIndices, positions, heightsV, heights, names}], meta, totalPoints }
+ */
+export function jrbToBuildingChunks(data, { defaultHeight = 0, maxVerts = 6000000, withNames = true } = {}) {
+  const jrb = decodeJrb(data);
+  const { meta, names } = jrb;
+  const quant = meta.quant || 1e5;
+  const n = meta.wayCount;
+
+  // パス1: 点数だけ(ヘッダ直読み)
+  const counts = new Uint32Array(n);
+  let totalPoints = 0;
+  for (let i = 0; i < n; i++) {
+    counts[i] = jrb.headerOf(i).count;
+    totalPoints += counts[i];
+  }
+
+  // チャンク境界(頂点予算で切る)
+  const bounds = [0];
+  let acc = 0;
+  for (let i = 0; i < n; i++) {
+    if (acc + counts[i] > maxVerts && acc > 0) { bounds.push(i); acc = 0; }
+    acc += counts[i];
+  }
+  bounds.push(n);
+
+  // チャンクごとに正確なサイズで確保
+  const chunks = [];
+  for (let ci = 0; ci < bounds.length - 1; ci++) {
+    const s = bounds[ci];
+    const e = bounds[ci + 1];
+    let verts = 0;
+    for (let i = s; i < e; i++) verts += counts[i];
+    chunks.push({
+      base: s, length: e - s,
+      startIndices: new Uint32Array(e - s + 1),
+      positions: new Float64Array(verts * 2),
+      heightsV: new Float32Array(verts),
+      heights: new Float32Array(e - s),
+      names: withNames ? new Array(e - s) : null,
+    });
+  }
+
+  // パス2: 1回の走査で充填(winding CW正規化込み)
+  let ci = 0;
+  let vp = 0;   // 現チャンク内の頂点位置
+  jrb.forEachWay((i, cls, nameIdx, value, count, readDelta) => {
+    if (i >= bounds[ci + 1]) { ci++; vp = 0; }
+    const ch = chunks[ci];
+    const li = i - ch.base;
+    ch.startIndices[li] = vp;
+    const hM = value > 0 ? value / 10 : defaultHeight;
+    ch.heights[li] = hM;
+    ch.heightsV.fill(hM, vp, vp + count);
+    if (ch.names) ch.names[li] = nameIdx >= 0 ? names[nameIdx] : null;
+    const base = vp * 2;
+    const pos = ch.positions;
+    let x = 0;
+    let y = 0;
+    let area2 = 0;
+    for (let j = 0; j < count; j++) {
+      const [dx, dy] = readDelta();
+      const px = x;
+      const py = y;
+      x += dx;
+      y += dy;
+      pos[base + j * 2] = x / quant;
+      pos[base + j * 2 + 1] = y / quant;
+      if (j > 0) area2 += (px * y - x * py);
+    }
+    if (area2 > 0) {
+      for (let a = 0, b = count - 1; a < b; a++, b--) {
+        const ax = pos[base + a * 2];
+        const ay = pos[base + a * 2 + 1];
+        pos[base + a * 2] = pos[base + b * 2];
+        pos[base + a * 2 + 1] = pos[base + b * 2 + 1];
+        pos[base + b * 2] = ax;
+        pos[base + b * 2 + 1] = ay;
+      }
+    }
+    vp += count;
+    if (li === ch.length - 1) ch.startIndices[ch.length] = vp;
+  });
+
+  return { chunks, meta, totalPoints, count: n };
 }

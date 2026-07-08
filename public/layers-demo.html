@@ -139,7 +139,7 @@
 
 <script type="module">
 import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
-import { jrbToBuildingBinary } from '/js/mapcore/jrb.js';
+import { jrbToBuildingChunks } from '/js/mapcore/jrb.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -481,7 +481,8 @@ async function loadBuildings() {
   { const el = $('loadnote'); el.textContent = `建物: デコード中…(${(ab.byteLength / 1e6).toFixed(0)}MB)`; }
   let bin;
   try {
-    bin = jrbToBuildingBinary(ab, { defaultHeight: 8 });
+    // チャンク分割デコード: 一枚岩の巨大ArrayBuffer(全国=3GB)を作らない
+    bin = jrbToBuildingChunks(ab, { defaultHeight: 8, withNames: ab.byteLength < 300e6 });
   } catch (err) {
     showPopup(`<b>デコード失敗(メモリ限界の可能性)</b><br><span class="k">${err.message}</span>`, { x: 40, y: 40 });
     $('loadnote').style.display = 'none';
@@ -489,10 +490,10 @@ async function loadBuildings() {
   }
   const tParse = performance.now();
   lastBuildingBinary = bin;   // onPickのindex→name/height引き当て用
-  const r = { count: bin.length, truncated: !!bin.meta.truncated, binary: true };
+  const r = { count: bin.count, truncated: !!bin.meta.truncated, binary: true };
   if (wholeRegion) $('bld-pin').checked = true;   // 全量読みは再取得無意味
-  dbg.lastFetch = { kind: '建物(bin)', count: bin.length,
-    verts: bin.meta.totalPoints || 0,
+  dbg.lastFetch = { kind: '建物(bin)', count: bin.count,
+    verts: bin.totalPoints || 0,
     fetchMs: tFetch - t0, parseMs: tParse - tFetch, bytes };
   if (r.error) {
     showPopup(`<b>OSM建物データ未生成</b><br><span class="k">${r.error}</span>`, { x: 40, y: 40 });
@@ -500,7 +501,7 @@ async function loadBuildings() {
     return;
   }
   showLoadNote('建物', r);
-  const data = { binary: { length: bin.length, startIndices: bin.startIndices, positions: bin.positions, heightsV: bin.heightsV } };
+  const data = { binary: { chunks: bin.chunks } };
   if (renderer.getLayers().some((l) => l.id === 'buildings')) {
     renderer.updateLayerData('buildings', data);
     renderer.setLayerVisible('buildings', true);
@@ -509,13 +510,15 @@ async function loadBuildings() {
       id: 'buildings', type: 'polygons', zIndex: 6,
       data,
       style: { color: '#8d99ae', opacity: 220 },
-      pickable: bin.length < 8000000,   // 巨大時はpickingバッファを作らない(タブ保護)
+      pickable: bin.count < 8000000,   // 巨大時はpickingバッファを作らない(タブ保護)
       onPick: (f, info) => {
-        const i = info.index;
-        if (i == null || i < 0 || !lastBuildingBinary) return;
-        const name = lastBuildingBinary.names[i];
-        const h = lastBuildingBinary.heights[i];
-        showPopup(`<b>${name || '(名無し建物)'}</b><br><span class="k">高さ:</span> ${h}m`, info);
+        const gi = info.index;   // renderer側でチャンクbase加算済みのグローバルindex
+        if (gi == null || gi < 0 || !lastBuildingBinary) return;
+        const ch = lastBuildingBinary.chunks.find((k) => gi >= k.base && gi < k.base + k.length);
+        if (!ch) return;
+        const li = gi - ch.base;
+        const name = ch.names ? ch.names[li] : null;
+        showPopup(`<b>${name || '(名無し建物)'}</b><br><span class="k">高さ:</span> ${ch.heights[li]}m`, info);
       },
     });
   }

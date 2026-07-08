@@ -84,6 +84,20 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
         // 600万頂点ごとにチャンク分割し、分割結果はdataオブジェクトにキャッシュする
         // (毎フレームのdraw()で参照が変わるとdeckが再アップロードしてしまうため)。
         const b = spec.data.binary;
+        if (b.chunks && !b._chunks) {
+          // デコーダ分割済み(jrbToBuildingChunks) — そのままレイヤーデータ化してキャッシュ
+          b._chunks = b.chunks.map((ch) => ({
+            base: ch.base,
+            data: {
+              length: ch.length,
+              startIndices: ch.startIndices,
+              attributes: {
+                getPolygon: { value: ch.positions, size: 2 },
+                getElevation: { value: ch.heightsV, size: 1 },
+              },
+            },
+          }));
+        }
         if (!b._chunks) {
           const VMAX = 6000000;
           const heightsSrc = b.heightsV || b.heights;

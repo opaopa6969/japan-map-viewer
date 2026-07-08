@@ -3,7 +3,7 @@
 //   node test/jrb-test.mjs
 import assert from 'node:assert';
 import { encodeRoads, QUANT } from '../lib/road-codec.mjs';
-import { decodeJrb, jrbToBuildingBinary } from '../public/js/mapcore/jrb.js';
+import { decodeJrb, jrbToBuildingBinary, jrbToBuildingChunks } from '../public/js/mapcore/jrb.js';
 
 let pass = 0;
 const ok = (c, label) => { assert.ok(c, label); pass++; console.log('ok   ' + label); };
@@ -69,6 +69,29 @@ const buf = encodeRoads({
   ok(jrb.meta.totalPoints === undefined, '旧ファイル相当(totalPoints無し)を用意できた');
   const bin = jrbToBuildingBinary(new Uint8Array(legacy));
   ok(bin.startIndices[2] === 8 && bin.positions.length === 16, '旧ファイルでもフォールバック走査で頂点が入る');
+}
+
+// ----- チャンク分割デコード(jrbToBuildingChunks) — 一枚岩を作らない経路 --------------
+{
+  const buf2 = encodeRoads({ region: 'wire', source: 'unit', classLabels: ['building'], ways: WAYS, withValues: true });
+  const whole = jrbToBuildingBinary(new Uint8Array(buf2));
+  const ck = jrbToBuildingChunks(new Uint8Array(buf2), { maxVerts: 5 });   // 4+4+3点 → 5頂点予算で3分割
+  ok(ck.count === 3 && ck.totalPoints === 11, 'chunks: count/totalPoints');
+  ok(ck.chunks.length === 3 && ck.chunks.map((c) => c.base).join(',') === '0,1,2', 'maxVerts=5で1棟ずつ3チャンク');
+  // 一枚岩版と頂点列が一致(チャンク連結で比較)
+  let off = 0;
+  let same = true;
+  for (const ch of ck.chunks) {
+    for (let j = 0; j < ch.positions.length; j++) {
+      if (ch.positions[j] !== whole.positions[off + j]) { same = false; break; }
+    }
+    off += ch.positions.length;
+  }
+  ok(same, 'チャンク連結の頂点列が一枚岩版と完全一致(winding込み)');
+  ok(ck.chunks[0].heights[0] === whole.heights[0] && ck.chunks[0].names[0] === '東京タワー', 'チャンクのheights/names');
+  ok(ck.chunks[2].startIndices[1] === 3, '各チャンクのstartIndicesはチャンク相対');
+  const noNames = jrbToBuildingChunks(new Uint8Array(buf2), { maxVerts: 5, withNames: false });
+  ok(noNames.chunks[0].names === null, 'withNames:falseでnames省略(メモリ節約)');
 }
 
 console.log(`\nall ${pass} checks passed`);

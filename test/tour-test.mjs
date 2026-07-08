@@ -86,4 +86,25 @@ const ROUTE = [[139.76, 35.68], [139.77, 35.68], [139.78, 35.69]];
   ok(done, 'ルート取得失敗でも周回フォールバックで完走');
 }
 
+// ----- cruiseKm(距離ベース)+ホップ: 上に飛んで左右を見て戻る --------------------------
+{
+  const r = fakeRenderer();
+  let done = false;
+  const spec2 = { ...SPEC, cruise: { ...SPEC.cruise, zoom: 17.3, pitch: 77, hopZoom: 0.9, hopSec: 2, lookDeg: 55 },
+    cities: [{ name: 'C', lat: 35.68, lon: 139.77, cruiseKm: 0.4, hops: 2 }] };
+  const longRoute = [];
+  for (let i = 0; i <= 60; i++) longRoute.push([139.76 + i * 0.0002, 35.68]);   // ~1.1km直線
+  const tour = createTourPlayer(r, spec2, { getRoute: async () => longRoute, onDone: () => { done = true; } });
+  tour.start();
+  await new Promise((res) => setTimeout(res, 10));
+  let guard = 30000;
+  while (tour.state.phase !== 'done' && guard-- > 0) tour.step(1 / 30);
+  ok(done && guard > 0, 'cruiseKm(距離ベース)で完走する');
+  const zooms = r.calls.map((c) => c.zoom);
+  const minCruise = Math.min(...zooms.filter((z) => z > 10));   // 低空帯だけ見る
+  ok(minCruise < 17.3 - 0.5, `ホップでzoomが一時的に下がる(最低 ${minCruise.toFixed(2)})`);
+  const bearings = r.calls.map((c) => c.bearing);
+  ok(Math.max(...bearings) > 20, '首振り(bearingオフセット)が入る');   // 直線東進(基準90度)+lookDegで振れる
+}
+
 console.log(`\nall ${pass} checks passed`);

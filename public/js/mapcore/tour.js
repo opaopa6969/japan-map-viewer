@@ -19,8 +19,10 @@
 //   "climb":    { "boost": 2.4, "maxVz": 3.0 },
 //   "cities": [ { "name": "東京", "lat": 35.681, "lon": 139.767, "cruiseSec": 30 }, ... ]
 // }
-//   cruise.speed は m/s(実速)。getRoute(city) は [[lon,lat],...] の実道路ポリラインを返す
-//   (無ければ都市中心の周回にフォールバック)。
+//   cruise.speed は m/s(実速・直線時)。カーブは先読み方位差で自動減速(curveSlow)。
+//   city.cruiseKm があれば距離ベースで走る(無ければ cruiseSec 秒)。cruiseKm 時は
+//   途中で hops 回(既定2〜3)、進行方向を変えずに50m級に飛び上がって左右を見る
+//   (hopZoom/hopSec/lookDeg)。getRoute(city) は実道路ポリライン(無ければ周回フォールバック)。
 
 import { headingDeg } from './layers.js';
 
@@ -71,7 +73,7 @@ function fallbackLoop(city) {
 export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } = {}) {
   const map = renderer.getMap();
   const ov = { zoom: 5.8, pitch: 35, ...(spec.overview || {}) };
-  const cz = { zoom: 15.8, pitch: 66, speed: 60, lookAhead: 80, bearingLag: 2.2, ...(spec.cruise || {}) };
+  const cz = { zoom: 15.8, pitch: 66, speed: 60, lookAhead: 80, bearingLag: 2.2, curveSlow: 1.2, hopZoom: 0.9, hopSec: 5, lookDeg: 55, ...(spec.cruise || {}) };
   const dv = { gravity: 3.2, maxVz: 3.6, flare: 8, steer: 2.4, ...(spec.dive || {}) };
   const cl = { boost: 2.4, maxVz: 3.0, ...(spec.climb || {}) };
   const cities = spec.cities || [];
@@ -97,7 +99,14 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
     st.routePromise = Promise.resolve(getRoute ? getRoute(city) : null)
       .catch(() => null)
       .then((coords) => {
-        st.route = buildRouteTable(coords && coords.length >= 2 ? coords : fallbackLoop(city));
+        let cs = coords && coords.length >= 2 ? coords : fallbackLoop(city);
+        let table = buildRouteTable(cs);
+        const need = (city.cruiseKm ? city.cruiseKm * 1000 : 0) * 1.15;
+        while (need > 0 && table.total < need && table.total > 0 && cs.length < 20000) {
+          cs = cs.concat([...cs].reverse().slice(1));   // 往復で延長(端→端のワープを防ぐ)
+          table = buildRouteTable(cs);
+        }
+        st.route = table;
       });
   }
 
@@ -136,24 +145,54 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
           if (d < bd) { bd = d; best = i; }
         }
         st.s = st.route.dist[best];
+        st.s0 = st.s;
         st.speed = cz.speed * 0.5;
+        // ホップ計画: 走行距離の等分点で hops 回(進行方向は変えず上に飛んで左右を見る)
+        const runM = city.cruiseKm ? city.cruiseKm * 1000 : null;
+        const nHops = runM ? (city.hops ?? (runM >= 2500 ? 3 : 2)) : 0;
+        st.hopsAt = [];
+        for (let h = 1; h <= nHops; h++) st.hopsAt.push(st.s0 + runM * h / (nHops + 1));
+        st.hop = null;
         setPhase('cruise');
       }
     } else if (st.phase === 'cruise') {
-      // --- 実道路に沿って疾走。speedも慣性、bearingは遅れて追従=ドリフト ---
-      st.speed += (cz.speed - st.speed) * Math.min(1, 1.2 * dt);
-      st.s += st.speed * dt;
+      // --- 実道路に沿って疾走。カーブは先読み方位差で減速、bearingは遅れて追従=ドリフト ---
       const p = routeAt(st.route, st.s);
       const ahead = routeAt(st.route, st.s + cz.lookAhead);
+      const turn = Math.abs(angleDelta(p.heading, routeAt(st.route, st.s + 40).heading));
+      const targetSpeed = cz.speed * Math.max(0.35, 1 - Math.min(0.65, (turn / 90) * cz.curveSlow));
+      st.speed += (targetSpeed - st.speed) * Math.min(1, 1.6 * dt);
+      st.s += st.speed * dt;
       cam.lon = p.lon + (ahead.lon - p.lon) * 0.35;         // 注視点は少し先(コーナーの内側を見る)
       cam.lat = p.lat + (ahead.lat - p.lat) * 0.35;
+      // ホップ: 到達点を跨いだら開始。進行方向は変えず、上に飛んで左右を見る
+      if (!st.hop && st.hopsAt && st.hopsAt.length && st.s >= st.hopsAt[0]) {
+        st.hopsAt.shift();
+        st.hop = { t: 0 };
+      }
+      let lookOff = 0;
+      let rise = 0;
+      if (st.hop) {
+        st.hop.t += dt;
+        const u = st.hop.t / cz.hopSec;
+        if (u >= 1) { st.hop = null; } else {
+          rise = Math.sin(Math.PI * u);                     // 上がって降りる
+          lookOff = Math.sin(2 * Math.PI * u) * cz.lookDeg * rise;   // 右→左を見て戻す
+        }
+      }
       cam.bearing += angleDelta(cam.bearing, p.heading) * Math.min(1, cz.bearingLag * dt);
-      cam.zoom = cz.zoom;
-      cam.pitch = cz.pitch;
-      if (st.t >= (city.cruiseSec ?? 30)) {
+      cam.zoom = cz.zoom - cz.hopZoom * rise;
+      cam.pitch = cz.pitch - 16 * rise;
+      const bearingOut = cam.bearing + lookOff;             // 首振りはカメラだけ(進路は不変)
+      const done = city.cruiseKm
+        ? (st.s - st.s0) >= city.cruiseKm * 1000 || st.t > 180
+        : st.t >= (city.cruiseSec ?? 30);
+      if (done && !st.hop) {
         cam.vZoom = 0;
         setPhase('climb');
       }
+      map.jumpTo({ center: [cam.lon, cam.lat], zoom: cam.zoom, bearing: bearingOut, pitch: cam.pitch });
+      return;   // 首振りbearingで描画済み
     } else if (st.phase === 'climb') {
       // --- ブースト上昇+次都市へバンク旋回 ---
       cam.vZoom = Math.min(cam.vZoom + cl.boost * dt, cl.maxVz);
@@ -191,6 +230,7 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
   function start() {
     if (st.running) return;
     st.running = true;
+    try { if (map.setMaxPitch && cz.pitch > 60) map.setMaxPitch(Math.min(85, cz.pitch + 8)); } catch (e) { /* noop */ }
     st.cityIdx = 0;
     const c0 = map.getCenter();
     Object.assign(cam, { lon: c0.lng, lat: c0.lat, zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(), vLon: 0, vLat: 0, vZoom: 0 });

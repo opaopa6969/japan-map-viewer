@@ -87,6 +87,7 @@
       <button class="btn" id="tour-btn">🦅 ツアー開始(録画つき)</button>
       <label class="chk row"><input type="checkbox" id="tour-rec" checked> 🎥 webm録画(終了時DL)</label>
       <label class="chk row"><input type="checkbox" id="tour-blur" checked> 🌪 残像モーションブラー</label>
+      <label class="chk row"><input type="checkbox" id="tour-fast" checked> ⚡ 高速化(描画解像度↓+H264/30fps録画)</label>
       <p class="sub" id="tour-note">日本全景→隼の急降下→実道路をドリフト疾走→上昇、を13ストップ(東京4名所+全国)。
         建物は事前に「全国+📌固定」推奨</p>
     </div>
@@ -641,10 +642,10 @@ $('base-labels').addEventListener('change', (e) => renderer.setLabels(e.target.c
 // --- 🦅 グランドツアー: tour file再生+実道路ルート+録画 ---------------------------
 // クルーズ路: 都市周辺の実道路(OSM)を端点マッチで1本に連結して「道路を縫う」コースにする
 async function getTourRoute(city) {
-  const dLat = 0.018;   // ≈2km
-  const dLon = 0.018 / Math.cos(city.lat * Math.PI / 180);
+  const dLat = 0.028;   // ≈3km(2〜3km走行ぶんの道路を確保)
+  const dLon = 0.028 / Math.cos(city.lat * Math.PI / 180);
   const res = await fetch(`/api/roads?bbox=${city.lon - dLon},${city.lat - dLat},${city.lon + dLon},${city.lat + dLat}`
-    + `&center=${city.lon},${city.lat}&classes=trunk,primary,secondary&limit=1500`);
+    + `&center=${city.lon},${city.lat}&classes=trunk,primary,secondary&limit=2500`);
   const r = await res.json();
   if (r.error || !r.paths || !r.paths.length) return null;
   const chain = stitchFrom(r.paths.map((p) => p.coords), [city.lon, city.lat]);
@@ -662,22 +663,25 @@ let blurHandler = null;
 function startTourBlur() {
   const map = renderer.getMap();
   const src = map.getCanvas();
+  const SCALE = $('tour-fast').checked ? 0.5 : 1;   // 半解像度合成=コピーもエンコードも1/4
   blurCanvas = document.createElement('canvas');
-  blurCanvas.width = src.width;
-  blurCanvas.height = src.height;
+  blurCanvas.width = Math.round(src.width * SCALE);
+  blurCanvas.height = Math.round(src.height * SCALE);
   blurCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:15;pointer-events:none;';
   $('main').appendChild(blurCanvas);
   const ctx = blurCanvas.getContext('2d');
   blurHandler = () => {
-    if (blurCanvas.width !== src.width || blurCanvas.height !== src.height) {
-      blurCanvas.width = src.width;
-      blurCanvas.height = src.height;
+    const w = Math.round(src.width * SCALE);
+    const h = Math.round(src.height * SCALE);
+    if (blurCanvas.width !== w || blurCanvas.height !== h) {
+      blurCanvas.width = w;
+      blurCanvas.height = h;
     }
     // フェーズで残像の濃さを変える(疾走/急降下ほど流れる)
     const phase = tour ? tour.state.phase : null;
     const a = phase === 'cruise' ? 0.42 : (phase === 'dive' || phase === 'climb') ? 0.5 : 0.9;
     ctx.globalAlpha = a;
-    ctx.drawImage(src, 0, 0);
+    ctx.drawImage(src, 0, 0, blurCanvas.width, blurCanvas.height);
   };
   map.on('render', blurHandler);
 }
@@ -689,10 +693,13 @@ function stopTourBlur() {
 function startTourRecording() {
   try {
     const canvas = blurCanvas || renderer.getMap().getCanvas();
-    const stream = canvas.captureStream(60);
-    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+    const fast = $('tour-fast').checked;
+    const stream = canvas.captureStream(fast ? 30 : 60);
+    // H264はハードウェアエンコードが効きやすい(VP9ソフトエンコはFPSを10まで落とす実測)
+    const mime = ['video/webm;codecs=h264', 'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm']
+      .find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
     const chunksRec = [];
-    tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 20e6 });
+    tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: fast ? 12e6 : 20e6 });
     tourRecorder.ondataavailable = (e) => { if (e.data.size) chunksRec.push(e.data); };
     tourRecorder.onstop = () => {
       const blob = new Blob(chunksRec, { type: 'video/webm' });
@@ -712,6 +719,8 @@ function stopTour() {
   if (tour) { tour.stop(); tour = null; }
   if (tourRecorder && tourRecorder.state !== 'inactive') tourRecorder.stop();
   stopTourBlur();
+  const m0 = renderer.getMap();
+  if (window._tourPrevPR && m0.setPixelRatio) { m0.setPixelRatio(window._tourPrevPR); window._tourPrevPR = null; }
   $('tour-btn').textContent = '🦅 ツアー開始(録画つき)';
   $('tour-btn').classList.remove('active');
 }
@@ -719,6 +728,10 @@ $('tour-btn').addEventListener('click', async () => {
   if (tour) { stopTour(); return; }
   const spec = await (await fetch('/data/tours/japan-grand-tour.json')).json();
   $('bld-pin').checked = true;   // ツアー中のmoveend再取得を止める(カクつき防止)
+  if ($('tour-fast').checked) {
+    const m = renderer.getMap();
+    if (m.setPixelRatio) { window._tourPrevPR = window.devicePixelRatio; m.setPixelRatio(1); }
+  }
   if ($('tour-blur').checked) startTourBlur();
   if ($('tour-rec').checked) startTourRecording();   // ブラー有効時は合成キャンバスを録画
   tour = createTourPlayer(renderer, spec, {

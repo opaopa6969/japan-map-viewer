@@ -473,7 +473,10 @@ export function createRendererDeck(container, opts = {}) {
         map.jumpTo({ center: [pos.lon, pos.lat], bearing: state.bearing });
       }
     }
-    if ((state.anim && state.mode === 'points') || moving) draw();
+    // pulse演出はmodel(点群)がある時だけ意味がある。model無しのレイヤー専用ページで
+    // 毎フレームdraw()=全レイヤー再構築するとメインスレッドを無駄に食う(建物20万棟で
+    // lag15ms実測)ので、movers稼働中かmodelありのpulse時のみ再構築する。
+    if ((state.anim && state.mode === 'points' && model) || moving) draw();
     else if (insets.size) drawInsets();
     tickInsets();
     rafId = requestAnimationFrame(tick);

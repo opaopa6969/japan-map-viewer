@@ -159,6 +159,7 @@ const renderer = createRendererDeck(container, { model, onPick });
 ## ドキュメント
 
 - [docs/design.md](./docs/design.md) — 設計契約(mapcore/レイヤーspec/JRB codec/API/割り切り)
+- [docs/jrb-format.md](./docs/jrb-format.md) — **JRBフォーマット仕様**(オリジナルのバイナリ形式。レイアウト/互換規則/限界/実測)
 - [docs/data-sources.md](./docs/data-sources.md) — **データソースカタログ**(全14種の出どころ・
   ライセンス・形式・使い方。新データはここに追記)
 - [issue #1](https://github.com/opaopa6969/japan-map-viewer/issues/1) — レイヤー機構の設計経緯と受け入れ条件

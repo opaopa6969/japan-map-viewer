@@ -30,6 +30,9 @@ const ok = (c, label) => { assert.ok(c, label); pass++; console.log('ok   ' + la
   assert.throws(() => validateLayerSpec({ id: 'b', type: 'polygons', data: { polygons: [{ id: 'x', ring: [[139, 35]] }] } }), /3点以上/);
   const b = validateLayerSpec({ id: 'b', type: 'polygons', data: { polygons: [{ id: 'x', ring: [[139, 35], [139.1, 35], [139.1, 35.1]], height: 20 }] } });
   ok(b.type === 'polygons', 'polygons型のspecが通る');
+  const bc = validateLayerSpec({ id: 'bc', type: 'polygons', data: { binary: { chunks: [{ length: 1, startIndices: new Uint32Array(2), positions: new Float64Array(6) }] } } });
+  ok(bc.type === 'polygons', 'polygons(binary.chunks)も通る');
+  assert.throws(() => validateLayerSpec({ id: 'bx', type: 'polygons', data: { binary: { chunks: [{}] } } }), /チャンク/);
   assert.throws(() => validateLayerSpec({ id: 't', type: 'tiles3d', data: {} }), /url/);
   const t = validateLayerSpec({ id: 't', type: 'tiles3d', data: { url: '/data/plateau/13101/tileset.json' } });
   ok(t.type === 'tiles3d', 'tiles3d型のspecが通る(url必須)');

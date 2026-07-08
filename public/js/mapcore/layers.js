@@ -66,10 +66,17 @@ export function validateLayerSpec(spec) {
     if (!Array.isArray(d.points)) throw new Error('markers は data.points[] が必要');
   } else if (spec.type === 'polygons') {
     if (d.binary) {
-      // binary attributes経路(jrb.js の jrbToBuildingBinary 出力): フラット型付き配列
+      // binary attributes経路: 単一バッファ(jrbToBuildingBinary)か
+      // チャンク分割済み(jrbToBuildingChunks の {chunks:[...]})のどちらか
       const b = d.binary;
-      if (!Number.isFinite(b.length) || !b.startIndices || !b.positions) {
-        throw new Error('polygons(binary) は {length, startIndices, positions} が必要');
+      if (Array.isArray(b.chunks)) {
+        for (const ch of b.chunks) {
+          if (!Number.isFinite(ch.length) || !ch.startIndices || !ch.positions) {
+            throw new Error('polygons(binary.chunks) の各チャンクは {length, startIndices, positions} が必要');
+          }
+        }
+      } else if (!Number.isFinite(b.length) || !b.startIndices || !b.positions) {
+        throw new Error('polygons(binary) は {length, startIndices, positions} か {chunks:[...]} が必要');
       }
     } else {
       if (!Array.isArray(d.polygons)) throw new Error('polygons は data.polygons[] か data.binary が必要');

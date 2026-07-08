@@ -623,7 +623,7 @@ setInterval(() => {
     `${dbg.hw.gpu}  |  ${dbg.hw.cpu}`,
     `map z${map0.getZoom().toFixed(2)} c(${ct.lng.toFixed(2)},${ct.lat.toFixed(2)}) p${map0.getPitch().toFixed(0)} b${map0.getBearing().toFixed(0)}`
       + `  dpr ${window.devicePixelRatio}  canvas ${cv.clientWidth}x${cv.clientHeight}css/${cv.width}x${cv.height}px`,
-    `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms${dbg.blurMs != null ? `  blur ${dbg.blurMs.toFixed(1)}ms/copy` : ''}`,
+    `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms${dbg.blurMs != null ? `  blur ${dbg.blurMs.toFixed(1)}ms` : ''}${dbg.recMs != null ? `  rec ${dbg.recMs.toFixed(1)}ms` : ''}`,
     m ? `deck CPU ${m.cpuTimePerFrame != null ? m.cpuTimePerFrame.toFixed(2) : '-'}ms/f  GPU ${m.gpuTimePerFrame != null && m.gpuTimePerFrame > 0 ? m.gpuTimePerFrame.toFixed(2) + 'ms/f' : '(timer query非対応)'}` : 'deck metrics: 取得待ち…',
     m && m.gpuMemory ? `GPUメモリ(推定) ${(m.gpuMemory / 1e6).toFixed(0)}MB (buf ${(m.bufferMemory / 1e6).toFixed(0)} / tex ${(m.textureMemory / 1e6).toFixed(0)})` : '',
     f ? `${f.kind} ${f.count.toLocaleString()}件  頂点 ${f.verts.toLocaleString()}` : '(まだfetchなし)',
@@ -696,16 +696,31 @@ function stopTourBlur() {
   if (blurCanvas) { blurCanvas.remove(); blurCanvas = null; }
 }
 
+let recCanvas = null;
+let recTimer = null;
 function startTourRecording() {
   try {
-    const canvas = blurCanvas || renderer.getMap().getCanvas();
+    // ライブのWebGLキャンバスを直接captureStreamすると毎フレームGPU読み戻しが走り
+    // 描画全体が同期ストールする(ツアーだけ10FPSの主因候補)。専用の小キャンバスへ
+    // 30fpsで縮小コピーし、そちらを録画する(読み戻しは30回/秒・720p分だけ)。
+    const src = blurCanvas || renderer.getMap().getCanvas();
     const fast = $('tour-fast').checked;
-    const stream = canvas.captureStream(fast ? 30 : 60);
-    // H264はハードウェアエンコードが効きやすい(VP9ソフトエンコはFPSを10まで落とす実測)
+    const H = fast ? 720 : 1080;
+    recCanvas = document.createElement('canvas');
+    recCanvas.height = H;
+    recCanvas.width = Math.round(H * src.width / src.height / 2) * 2;
+    const rctx = recCanvas.getContext('2d');
+    recTimer = setInterval(() => {
+      const t0r = performance.now();
+      const s = blurCanvas || renderer.getMap().getCanvas();
+      rctx.drawImage(s, 0, 0, recCanvas.width, recCanvas.height);
+      dbg.recMs = performance.now() - t0r;
+    }, 33);
+    const stream = recCanvas.captureStream(30);
     const mime = ['video/webm;codecs=h264', 'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm']
       .find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
     const chunksRec = [];
-    tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: fast ? 12e6 : 20e6 });
+    tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: fast ? 10e6 : 16e6 });
     tourRecorder.ondataavailable = (e) => { if (e.data.size) chunksRec.push(e.data); };
     tourRecorder.onstop = () => {
       const blob = new Blob(chunksRec, { type: 'video/webm' });
@@ -726,6 +741,8 @@ function stopTour() {
   renderer.removeLayer('tour-bld');
   renderer.setLayerVisible('buildings', $('ly-buildings').checked);
   if (tourRecorder && tourRecorder.state !== 'inactive') tourRecorder.stop();
+  if (recTimer) { clearInterval(recTimer); recTimer = null; }
+  recCanvas = null;
   stopTourBlur();
   const m0 = renderer.getMap();
   if (window._tourPrevPR && m0.setPixelRatio) { m0.setPixelRatio(window._tourPrevPR); window._tourPrevPR = null; }

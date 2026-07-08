@@ -757,8 +757,8 @@ $('tour-btn').addEventListener('click', async () => {
   if ($('tour-fast').checked) {
     const m = renderer.getMap();
     if (m.setPixelRatio) { window._tourPrevPR = window.devicePixelRatio; m.setPixelRatio(1); }
-    // ベクタ解析+日本語ラベル衝突判定がFPSを喰う主犯 — ツアー中はラスタ版ダークへ
-    renderer.setBase('darkRaster');
+    // 地面リッチ化: ツアー中は地理院の航空写真(ラスタ=高速・ベクタ解析なし)
+    renderer.setBase('photo');
     window._tourPrevBase = 'dark';
   }
   if ($('tour-blur').checked) startTourBlur();
@@ -774,7 +774,7 @@ $('tour-btn').addEventListener('click', async () => {
       // 画面外の建物も毎フレーム頂点演算される(deckはカリングしない)ため、
       // 疾走中はメガ建物レイヤーを外し、都市周辺(半径2.5km)だけの軽量版に差し替える。
       if (phase === 'dive' && city) {
-        tourBldPromise = fetch(`/api/buildings?center=${city.lon},${city.lat}&radius=2500&limit=80000&format=bin`)
+        tourBldPromise = fetch(`/api/buildings?center=${city.lon},${city.lat}&radius=4500&limit=150000&format=bin`)
           .then((r) => (r.ok ? r.arrayBuffer() : null))
           .then((ab) => (ab ? jrbToBuildingChunks(ab, { defaultHeight: 8, withNames: false }) : null))
           .catch(() => null);

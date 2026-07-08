@@ -107,4 +107,33 @@ const ROUTE = [[139.76, 35.68], [139.77, 35.68], [139.78, 35.69]];
   ok(Math.max(...bearings) > 20, '首振り(bearingオフセット)が入る');   // 直線東進(基準90度)+lookDegで振れる
 }
 
+// ----- arcモード: 道路不要の旋回フライバイ+高高度トランジット ------------------------
+{
+  const r = fakeRenderer();
+  let done = false;
+  const specArc = {
+    overview: { zoom: 8.7, pitch: 48 },
+    cruise: { mode: 'arc', zoom: 16.0, pitch: 73, speed: 170, turnRate: 16, bearingLag: 2.5 },
+    dive: { gravity: 3.4, maxVz: 4.2, flare: 9, nearKm: 12, transitK: 0.35, transitZoom: 9.3 },
+    climb: { boost: 2.8, maxVz: 3.4 },
+    cities: [
+      { name: '東京', lat: 35.68, lon: 139.77, cruiseSec: 3 },
+      { name: '札幌', lat: 43.06, lon: 141.35, cruiseSec: 3 },   // 830km先=トランジットが要る
+    ],
+  };
+  const tour = createTourPlayer(r, specArc, { onDone: () => { done = true; } });   // getRoute無しで動く
+  tour.start();
+  await new Promise((res) => setTimeout(res, 5));
+  let guard = 60000;
+  while (tour.state.phase !== 'done' && guard-- > 0) tour.step(1 / 30);
+  ok(done && guard > 0, 'arcモード: getRoute無しで2都市(830km)を完走');
+  const bearings = r.calls.map((c) => c.bearing);
+  let spread = 0;
+  for (let i = 1; i < bearings.length; i++) spread += Math.abs(bearings[i] - bearings[i - 1]) > 0.01 ? 1 : 0;
+  ok(spread > 100, '旋回でbearingが回り続ける');
+  const zooms = r.calls.map((c) => c.zoom);
+  ok(zooms.some((z) => Math.abs(z - 16.0) < 0.05), '上空100m級(z16)まで降りる');
+  ok(zooms.some((z) => z < 10 && z > 8.5), '都市間は飛行機高度(z9前後)で移動');
+}
+
 console.log(`\nall ${pass} checks passed`);

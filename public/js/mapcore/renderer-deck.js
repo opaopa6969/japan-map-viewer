@@ -36,6 +36,21 @@ const DEFAULT_STYLES = {
   // darkRaster: 同じ見た目のラスタ版 — ベクタ解析もラベル衝突判定も無いので
   // 高速移動(ツアー)中のFPSが段違い(タイルはデコードして貼るだけ)。
   dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  // photo: 地理院シームレス空中写真 — 「地面がリッチ」なツアー用(ラスタ=高速)
+  photo: {
+    version: 8,
+    sources: {
+      photo: {
+        type: 'raster',
+        tiles: ['https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg'],
+        tileSize: 256, attribution: '地理院タイル(シームレス空中写真)', maxzoom: 18,
+      },
+    },
+    layers: [
+      { id: 'bg', type: 'background', paint: { 'background-color': '#0b0e13' } },
+      { id: 'photo', type: 'raster', source: 'photo' },
+    ],
+  },
   darkRaster: {
     version: 8,
     sources: {

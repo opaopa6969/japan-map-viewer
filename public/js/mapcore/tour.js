@@ -95,6 +95,7 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
   function beginDive() {
     const city = cities[st.cityIdx];
     setPhase('dive');
+    if (cz.mode === 'arc') { st.route = null; return; }   // 旋回フライバイは道路不要
     // ルートは降下中に先読み(失敗しても周回フォールバック)
     st.routePromise = Promise.resolve(getRoute ? getRoute(city) : null)
       .catch(() => null)
@@ -118,25 +119,42 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
     if (!city) return finish();
 
     if (st.phase === 'dive') {
-      // --- 垂直: 重力で降下加速、cruiseZoom接近でフレア(引き起こし) ---
-      const remain = cz.zoom - cam.zoom;                    // 残り降下量(zoom)
-      if (remain > 1.6) cam.vZoom = Math.min(cam.vZoom + dv.gravity * dt, dv.maxVz);
-      else cam.vZoom = Math.max(cam.vZoom - dv.flare * dt, 0.35);   // フレア: 強減速(Gを感じる所)
-      cam.zoom = Math.min(cam.zoom + cam.vZoom * dt, cz.zoom);
-      // --- 水平: 目標都市へ慣性つき誘導(高高度ほど大きく舵) ---
-      const k = dv.steer * Math.max(0.15, (cz.zoom - cam.zoom) / (cz.zoom - ov.zoom));
-      cam.vLon += (city.lon - cam.lon) * k * dt;
-      cam.vLat += (city.lat - cam.lat) * k * dt;
-      cam.vLon *= Math.max(0, 1 - 1.6 * dt);                // 減衰(慣性)
-      cam.vLat *= Math.max(0, 1 - 1.6 * dt);
-      cam.lon += cam.vLon * dt;
-      cam.lat += cam.vLat * dt;
-      // 機首: 降下中は進行方向へ、pitchは降下量に応じて起きる
+      const kLonM = 111320 * Math.cos(cam.lat * DEG);
+      const distM = Math.hypot((city.lon - cam.lon) * kLonM, (city.lat - cam.lat) * 111320);
+      const nearM = (dv.nearKm ?? 12) * 1000;
+      if (distM > nearM) {
+        // --- 高高度トランジット: 降下は保留し、飛行機高度で次都市へビューンと滑空 ---
+        const zT = dv.transitZoom ?? (ov.zoom + 0.8);
+        cam.zoom += (zT - cam.zoom) * Math.min(1, 0.9 * dt);
+        cam.vZoom = 0;
+        const rate = Math.min(1, (dv.transitK ?? 0.35) * dt);   // 指数接近(遠いほど速く見える)
+        cam.lon += (city.lon - cam.lon) * rate;
+        cam.lat += (city.lat - cam.lat) * rate;
+      } else {
+        // --- 垂直: 重力で降下加速、cruiseZoom接近でフレア(引き起こし) ---
+        const remain = cz.zoom - cam.zoom;                    // 残り降下量(zoom)
+        if (remain > 1.6) cam.vZoom = Math.min(cam.vZoom + dv.gravity * dt, dv.maxVz);
+        else cam.vZoom = Math.max(cam.vZoom - dv.flare * dt, 0.35);   // フレア: 強減速(Gを感じる所)
+        cam.zoom = Math.min(cam.zoom + cam.vZoom * dt, cz.zoom);
+        // --- 水平: 目標都市へ吸着(降下しながら中心へ) ---
+        const rate = Math.min(1, 1.4 * dt);
+        cam.lon += (city.lon - cam.lon) * rate;
+        cam.lat += (city.lat - cam.lat) * rate;
+      }
+      // 機首: 進行方向へ、pitchは降下量に応じて起きる
       const hdg = headingDeg(cam.lat, cam.lon, city.lat, city.lon);
       cam.bearing += angleDelta(cam.bearing, hdg) * Math.min(1, 1.5 * dt);
-      const prog = 1 - Math.max(0, remain) / (cz.zoom - ov.zoom);
+      const prog = 1 - Math.max(0, cz.zoom - cam.zoom) / (cz.zoom - ov.zoom);
       cam.pitch = ov.pitch + (cz.pitch - ov.pitch) * Math.min(1, prog * 1.15);
-      if (cam.zoom >= cz.zoom - 0.02 && st.route) {
+      if (cam.zoom >= cz.zoom - 0.02 && (cz.mode === 'arc' || st.route)) {
+        if (cz.mode === 'arc') {
+          // 旋回フライバイ: 現在の機首から左右交互にバンク
+          st.arcHeading = cam.bearing;
+          st.arcDir = st.cityIdx % 2 ? -1 : 1;
+          setPhase('cruise');
+          map.jumpTo({ center: [cam.lon, cam.lat], zoom: cam.zoom, bearing: cam.bearing, pitch: cam.pitch });
+          return;
+        }
         // 接地: ルート上の最寄り点から巡航開始
         let best = 0;
         let bd = Infinity;
@@ -154,6 +172,19 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
         for (let h = 1; h <= nHops; h++) st.hopsAt.push(st.s0 + runM * h / (nHops + 1));
         st.hop = null;
         setPhase('cruise');
+      }
+    } else if (st.phase === 'cruise' && cz.mode === 'arc') {
+      // --- 旋回フライバイ: 上空100m級を一定バンクでカーブしながら飛ぶ ---
+      st.arcHeading += st.arcDir * (cz.turnRate ?? 16) * dt;
+      const kLonM = 111320 * Math.cos(cam.lat * DEG);
+      cam.lon += Math.sin(st.arcHeading * DEG) * cz.speed * dt / kLonM;
+      cam.lat += Math.cos(st.arcHeading * DEG) * cz.speed * dt / 111320;
+      cam.bearing += angleDelta(cam.bearing, st.arcHeading) * Math.min(1, cz.bearingLag * dt);
+      cam.zoom = cz.zoom;
+      cam.pitch = cz.pitch;
+      if (st.t >= (city.cruiseSec ?? 5)) {
+        cam.vZoom = 0;
+        setPhase('climb');
       }
     } else if (st.phase === 'cruise') {
       // --- 実道路に沿って疾走。カーブは先読み方位差で減速、bearingは遅れて追従=ドリフト ---

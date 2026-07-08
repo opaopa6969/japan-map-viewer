@@ -1,109 +1,103 @@
 {
   "name": "japan-grand-tour",
-  "description": "日本全景から隼の急降下→地面すれすれ(z18)を270km/hで実道路をドリフト疾走(2〜3km)→上昇して次へ。東京4名所+全国の13ストップ。",
+  "description": "航空写真の上を、隼の急降下→上空100m級を旋回フライバイ5秒→飛行機高度でビューンと次へ。東京4名所は北行き・南行きの合間に分散。",
   "overview": {
-    "zoom": 5.8,
-    "pitch": 35
+    "zoom": 8.7,
+    "pitch": 48
   },
   "cruise": {
-    "zoom": 18.0,
-    "pitch": 78,
-    "speed": 75,
-    "lookAhead": 45,
-    "bearingLag": 3.5,
-    "curveSlow": 1.1,
-    "hopZoom": 0.9,
-    "hopSec": 5,
-    "lookDeg": 55
+    "mode": "arc",
+    "zoom": 16.0,
+    "pitch": 73,
+    "speed": 170,
+    "turnRate": 16,
+    "bearingLag": 2.5
   },
   "dive": {
-    "gravity": 3.2,
-    "maxVz": 3.8,
-    "flare": 8,
-    "steer": 2.4
+    "gravity": 3.4,
+    "maxVz": 4.2,
+    "flare": 9,
+    "steer": 2.6,
+    "nearKm": 12,
+    "transitK": 0.35,
+    "transitZoom": 9.3
   },
   "climb": {
-    "boost": 2.6,
-    "maxVz": 3.2
+    "boost": 2.8,
+    "maxVz": 3.4
   },
   "cities": [
     {
       "name": "東京・丸の内",
       "lat": 35.6812,
       "lon": 139.7671,
-      "cruiseKm": 2.5
-    },
-    {
-      "name": "東京・新宿",
-      "lat": 35.6896,
-      "lon": 139.7006,
-      "cruiseKm": 2.0
-    },
-    {
-      "name": "東京・渋谷",
-      "lat": 35.658,
-      "lon": 139.7016,
-      "cruiseKm": 2.0
-    },
-    {
-      "name": "東京・秋葉原",
-      "lat": 35.6984,
-      "lon": 139.7731,
-      "cruiseKm": 2.0
-    },
-    {
-      "name": "札幌・すすきの",
-      "lat": 43.0555,
-      "lon": 141.3524,
-      "cruiseKm": 2.5
+      "cruiseSec": 6
     },
     {
       "name": "仙台",
       "lat": 38.2682,
       "lon": 140.8694,
-      "cruiseKm": 2.5
+      "cruiseSec": 5
+    },
+    {
+      "name": "札幌・すすきの",
+      "lat": 43.0555,
+      "lon": 141.3524,
+      "cruiseSec": 6
+    },
+    {
+      "name": "東京・秋葉原",
+      "lat": 35.6984,
+      "lon": 139.7731,
+      "cruiseSec": 5
     },
     {
       "name": "金沢",
       "lat": 36.5613,
       "lon": 136.6562,
-      "cruiseKm": 2.5
+      "cruiseSec": 5
     },
     {
       "name": "京都",
       "lat": 35.0116,
       "lon": 135.7681,
-      "cruiseKm": 3.0
+      "cruiseSec": 6
     },
     {
       "name": "大阪・梅田",
       "lat": 34.7025,
       "lon": 135.4959,
-      "cruiseKm": 2.5
+      "cruiseSec": 6
     },
     {
       "name": "神戸",
       "lat": 34.6913,
       "lon": 135.183,
-      "cruiseKm": 2.5
+      "cruiseSec": 5
     },
     {
       "name": "広島",
       "lat": 34.3853,
       "lon": 132.4553,
-      "cruiseKm": 2.5
+      "cruiseSec": 5
     },
     {
       "name": "福岡・天神",
       "lat": 33.5902,
       "lon": 130.4017,
-      "cruiseKm": 2.5
+      "cruiseSec": 6
     },
     {
-      "name": "東京(帰還)",
-      "lat": 35.6812,
-      "lon": 139.7671,
-      "cruiseKm": 2.0
+      "name": "東京・渋谷",
+      "lat": 35.658,
+      "lon": 139.7016,
+      "cruiseSec": 5
+    },
+    {
+      "name": "東京・新宿",
+      "lat": 35.6896,
+      "lon": 139.7006,
+      "cruiseSec": 6
     }
   ]
 }

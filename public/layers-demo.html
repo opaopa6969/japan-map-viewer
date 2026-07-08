@@ -497,6 +497,11 @@ dbg.hw = (() => {
   } catch (_) { /* 同上 */ }
   return { gpu, cpu };
 })();
+// サーバ側os情報でCPUモデル名をbest effort補完(localhost=同一マシン前提。/api/sysinfo)
+fetch('/api/sysinfo').then((r) => r.json()).then((s) => {
+  if (s.cpu) dbg.hw.cpu = `${s.cpu} (${s.cores}コア/${s.memGB}GB)`;
+  if (s.gpu && dbg.hw.gpu === '-') dbg.hw.gpu = s.gpu;
+}).catch(() => { /* 無くても動く */ });
 // メインスレッドの詰まり(event loop lag): setTimeoutの遅着で測る
 (function lagLoop() {
   const t0 = performance.now();
@@ -508,7 +513,7 @@ setInterval(() => {
   const layers = renderer.getLayers().filter((l) => l.visible).map((l) => l.id).join(' ');
   const m = dbg.metrics;
   const lines = [
-    `${dbg.hw.gpu}  |  CPU ${dbg.hw.cpu}(モデル名はブラウザ非公開)`,
+    `${dbg.hw.gpu}  |  ${dbg.hw.cpu}`,
     `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms`,
     m ? `deck CPU ${m.cpuTimePerFrame != null ? m.cpuTimePerFrame.toFixed(2) : '-'}ms/f  GPU ${m.gpuTimePerFrame != null && m.gpuTimePerFrame > 0 ? m.gpuTimePerFrame.toFixed(2) + 'ms/f' : '(timer query非対応)'}` : 'deck metrics: 取得待ち…',
     m && m.gpuMemory ? `GPUメモリ(推定) ${(m.gpuMemory / 1e6).toFixed(0)}MB (buf ${(m.bufferMemory / 1e6).toFixed(0)} / tex ${(m.textureMemory / 1e6).toFixed(0)})` : '',

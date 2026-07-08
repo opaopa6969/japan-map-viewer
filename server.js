@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, extname } from 'node:path';
 import { openRoads } from './lib/road-codec.mjs';
 import { gzipSync } from 'node:zlib';
+import { cpus, totalmem, platform, release } from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(root, 'public');
@@ -317,6 +319,32 @@ async function serveBuildings(req, res, path) {
   send({ count: polygons.length, truncated, radius, polygons });
 }
 
+// --- サーバマシン情報 API (/api/sysinfo) --------------------------------------------
+// ブラウザはCPUモデル名を非公開にするため、サーバ側(Node)のos情報をbest effortで返す。
+// localhostで動かしている限り「ブラウザと同じマシン」の実名が出る。GPU名はnvidia-smiが
+// あれば取得(無ければnull — クライアント側のWebGL名を使えばよい)。
+let sysinfoCache = null;
+function serveSysinfo(res) {
+  if (!sysinfoCache) {
+    let gpu = null;
+    try {
+      gpu = execFileSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], { timeout: 3000 })
+        .toString().trim().split('\n')[0] || null;
+    } catch (_) { /* nvidia-smi無し(非NVIDIA/コンテナ等) */ }
+    const cpuList = cpus();
+    sysinfoCache = {
+      cpu: cpuList[0] ? cpuList[0].model.replace(/\s+/g, ' ').trim() : null,
+      cores: cpuList.length,
+      memGB: Math.round(totalmem() / 2 ** 30),
+      gpu,
+      platform: `${platform()} ${release()}`,
+      note: 'サーバ(Node)側の実測。localhostならブラウザと同一マシン',
+    };
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
+  res.end(JSON.stringify(sysinfoCache));
+}
+
 // --- 標高 API (/api/elevation) ------------------------------------------------------
 // 地理院DEM由来のheightfield(public/terrain/japan.heightfield.json)をバイリニア補間。
 // 表示用に間引かれた格子(z10・約1km)なので精度は±数十m — sourceで明示する。
@@ -396,6 +424,7 @@ const server = createServer(async (req, res) => {
   let path = (req.url || '/').split('?')[0];
   if (path === '/api/address-points') { serveAddressPoints(req, res); return; }
   if (path === '/api/elevation') { serveElevation(req, res); return; }
+  if (path === '/api/sysinfo') { serveSysinfo(res); return; }
   if (path === '/api/railways' || path.startsWith('/api/railways/')) { serveRailways(req, res, path); return; }
   if (path === '/api/roads' || path.startsWith('/api/roads/')) { serveRoads(req, res, path); return; }
   if (path === '/api/buildings' || path.startsWith('/api/buildings/')) { serveBuildings(req, res, path); return; }

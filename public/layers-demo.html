@@ -615,6 +615,11 @@ setInterval(() => {
   if (!dbg.on) return;
   const f = dbg.lastFetch;
   const layers = renderer.getLayers().filter((l) => l.visible).map((l) => l.id).join(' ');
+  let tileCount = 0;
+  try {
+    const sc = map0.style && map0.style._sourceCaches;
+    if (sc) for (const k of Object.keys(sc)) tileCount += Object.keys(sc[k]._tiles || {}).length;
+  } catch (_) { /* 内部APIなので取れなくても無視 */ }
   const m = dbg.metrics;
   const map0 = renderer.getMap();
   const cv = map0.getCanvas();
@@ -622,7 +627,7 @@ setInterval(() => {
   const lines = [
     `${dbg.hw.gpu}  |  ${dbg.hw.cpu}`,
     `map z${map0.getZoom().toFixed(2)} c(${ct.lng.toFixed(2)},${ct.lat.toFixed(2)}) p${map0.getPitch().toFixed(0)} b${map0.getBearing().toFixed(0)}`
-      + `  dpr ${window.devicePixelRatio}  canvas ${cv.clientWidth}x${cv.clientHeight}css/${cv.width}x${cv.height}px`,
+      + `  dpr ${window.devicePixelRatio}  canvas ${cv.clientWidth}x${cv.clientHeight}css/${cv.width}x${cv.height}px  tiles ${tileCount}`,
     `FPS ${dbg.fps}  frame ${dbg.fps ? (1000 / dbg.fps).toFixed(1) : '-'}ms  lag ${dbg.loopLag.toFixed(1)}ms${dbg.blurMs != null ? `  blur ${dbg.blurMs.toFixed(1)}ms` : ''}${dbg.recMs != null ? `  rec ${dbg.recMs.toFixed(1)}ms` : ''}`,
     m ? `deck CPU ${m.cpuTimePerFrame != null ? m.cpuTimePerFrame.toFixed(2) : '-'}ms/f  GPU ${m.gpuTimePerFrame != null && m.gpuTimePerFrame > 0 ? m.gpuTimePerFrame.toFixed(2) + 'ms/f' : '(timer query非対応)'}` : 'deck metrics: 取得待ち…',
     m && m.gpuMemory ? `GPUメモリ(推定) ${(m.gpuMemory / 1e6).toFixed(0)}MB (buf ${(m.bufferMemory / 1e6).toFixed(0)} / tex ${(m.textureMemory / 1e6).toFixed(0)})` : '',
@@ -754,6 +759,7 @@ $('tour-btn').addEventListener('click', async () => {
   if (tour) { stopTour(); return; }
   const spec = await (await fetch('/data/tours/japan-grand-tour.json')).json();
   $('bld-pin').checked = true;   // ツアー中のmoveend再取得を止める(カクつき防止)
+  renderer.setLayerVisible('buildings', false);   // メガ建物はツアー全編OFF(頂点負荷ゼロ化)
   if ($('tour-fast').checked) {
     const m = renderer.getMap();
     if (m.setPixelRatio) { window._tourPrevPR = window.devicePixelRatio; m.setPixelRatio(1); }
@@ -789,7 +795,8 @@ $('tour-btn').addEventListener('click', async () => {
         }
       } else if (phase === 'climb') {
         renderer.setLayerVisible('tour-bld', false);
-        renderer.setLayerVisible('buildings', $('ly-buildings').checked);   // 俯瞰では戻す
+        // メガ建物(全国29M等)はツアー中ずっとOFFのまま — 俯瞰で再表示すると
+        // 1.88億頂点/フレームが復活してFPSを落とすため。都市の建物はスワップが出す
       }
     },
     onDone: () => {

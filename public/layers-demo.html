@@ -95,6 +95,8 @@
   </aside>
   <div id="main">
     <div id="map"></div>
+    <div id="loadnote" style="position:absolute; left:10px; bottom:10px; z-index:24; background:rgba(16,20,28,.8);
+      border:1px solid var(--border); border-radius:8px; padding:5px 10px; font-size:12px; color:var(--muted); display:none;"></div>
     <div id="popup"><span class="close" onclick="this.parentElement.style.display='none'">✕</span><div id="popup-body"></div></div>
   </div>
 </div>
@@ -360,18 +362,32 @@ $('ly-osmroads').addEventListener('change', (e) => {
 });
 
 // OSM建物: zoom14+ でビューポートの建物を /api/buildings から取得し押し出し表示。
+// 上限超過時はサーバが画面中心から近い順に返す(truncatedを下部ノートに明示)。
+function showLoadNote(kind, r) {
+  const el = $('loadnote');
+  if (r.truncated) {
+    el.textContent = `${kind}: ${r.count.toLocaleString()}/${(r.total ?? 0).toLocaleString()}件(中心優先で表示・ズームインで全件)`;
+    el.style.display = 'block';
+  } else {
+    el.textContent = `${kind}: ${r.count.toLocaleString()}件`;
+    el.style.display = 'block';
+    clearTimeout(el._tm);
+    el._tm = setTimeout(() => { el.style.display = 'none'; }, 2500);
+  }
+}
 let bldMoveHandler = null;
 async function loadBuildings() {
   const map = renderer.getMap();
-  if (map.getZoom() < 14) { renderer.setLayerVisible('buildings', false); return; }
+  if (map.getZoom() < 14) { renderer.setLayerVisible('buildings', false); $('loadnote').style.display = 'none'; return; }
   const b = map.getBounds();
-  const res = await fetch(`/api/buildings?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&limit=6000`);
+  const res = await fetch(`/api/buildings?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&limit=8000`);
   const r = await res.json();
   if (r.error) {
     showPopup(`<b>OSM建物データ未生成</b><br><span class="k">${r.error}</span>`, { x: 40, y: 40 });
     $('ly-buildings').checked = false;
     return;
   }
+  showLoadNote('建物', r);
   if (renderer.getLayers().some((l) => l.id === 'buildings')) {
     renderer.updateLayerData('buildings', { polygons: r.polygons });
     renderer.setLayerVisible('buildings', true);

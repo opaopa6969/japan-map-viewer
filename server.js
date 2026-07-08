@@ -199,22 +199,30 @@ async function serveRoads(req, res, path) {
   }
   const classNames = q.get('classes') ? q.get('classes').split(',') : null;
   const limit = Math.min(20000, +(q.get('limit') || 4000));
-  const paths = [];
-  let truncated = false;
+  // 上限超過時は「bbox中心から近い順」で切り詰める(buildings側と同じ方針)
+  const cx = (bboxRaw[0] + bboxRaw[2]) / 2 * 1e5;
+  const cy = (bboxRaw[1] + bboxRaw[3]) / 2 * 1e5;
+  const candidates = [];
   for (const { handle } of handles) {
     const classFilter = classNames
       ? new Set(classNames.map((c) => handle.meta.classLabels.indexOf(c)).filter((i) => i >= 0))
       : null;
     if (classFilter && classFilter.size === 0) continue;
-    const r = handle.queryBbox(bboxRaw, { classFilter, maxWays: limit - paths.length });
-    truncated = truncated || r.truncated;
+    const r = handle.queryBbox(bboxRaw, { classFilter, maxWays: 80000 - candidates.length });
     for (const i of r.indices) {
-      const w = handle.decodeWay(i);
-      paths.push({ id: `${handle.meta.region}:${i}`, name: w.name, kind: handle.meta.classLabels[w.class], coords: w.coords });
+      const [mnx, mny, mxx, mxy] = handle.bboxOf(i);
+      const dx = (mnx + mxx) / 2 - cx;
+      const dy = (mny + mxy) / 2 - cy;
+      candidates.push({ handle, i, d: dx * dx + dy * dy });
     }
-    if (paths.length >= limit) { truncated = true; break; }
   }
-  send({ count: paths.length, truncated, paths });
+  const truncated = candidates.length > limit;
+  if (truncated) candidates.sort((a, b) => a.d - b.d);
+  const paths = candidates.slice(0, limit).map(({ handle, i }) => {
+    const w = handle.decodeWay(i);
+    return { id: `${handle.meta.region}:${i}`, name: w.name, kind: handle.meta.classLabels[w.class], coords: w.coords };
+  });
+  send({ count: paths.length, total: candidates.length, truncated, paths });
 }
 
 // --- OSM建物 API (/api/buildings) ---------------------------------------------------
@@ -259,18 +267,27 @@ async function serveBuildings(req, res, path) {
     return;
   }
   const limit = Math.min(20000, +(q.get('limit') || 3000));
-  const polygons = [];
-  let truncated = false;
+  // 上限超過時の切り詰めを「bbox中心から近い順」で行う(グリッド走査順の恣意的な
+  // 欠け=パンのたびに別の一角が消える現象を防ぎ、画面中心は常に埋まる)。
+  const cx = (bboxRaw[0] + bboxRaw[2]) / 2 * 1e5;
+  const cy = (bboxRaw[1] + bboxRaw[3]) / 2 * 1e5;
+  const candidates = [];
   for (const { handle } of handles) {
-    const r = handle.queryBbox(bboxRaw, { maxWays: limit - polygons.length });
-    truncated = truncated || r.truncated;
+    const r = handle.queryBbox(bboxRaw, { maxWays: 80000 - candidates.length });
     for (const i of r.indices) {
-      const w = handle.decodeWay(i);
-      polygons.push({ id: `${handle.meta.region}:${i}`, name: w.name, height: w.value / 10, ring: w.coords });
+      const [mnx, mny, mxx, mxy] = handle.bboxOf(i);
+      const dx = (mnx + mxx) / 2 - cx;
+      const dy = (mny + mxy) / 2 - cy;
+      candidates.push({ handle, i, d: dx * dx + dy * dy });
     }
-    if (polygons.length >= limit) { truncated = true; break; }
   }
-  send({ count: polygons.length, truncated, polygons });
+  const truncated = candidates.length > limit;
+  if (truncated) candidates.sort((a, b) => a.d - b.d);
+  const polygons = candidates.slice(0, limit).map(({ handle, i }) => {
+    const w = handle.decodeWay(i);
+    return { id: `${handle.meta.region}:${i}`, name: w.name, height: w.value / 10, ring: w.coords };
+  });
+  send({ count: polygons.length, total: candidates.length, truncated, polygons });
 }
 
 // --- 標高 API (/api/elevation) ------------------------------------------------------

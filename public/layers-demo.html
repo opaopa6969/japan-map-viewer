@@ -116,6 +116,7 @@
           <option value="4000000">4,000,000 (⚠⚠⚠)</option>
           <option value="6200000">6,200,000 (全関東・直送)</option>
           <option value="10000000">10,000,000 (⚠限界挑戦)</option>
+          <option value="29100000">29,100,000 (全国・直送☠タブと相談)</option>
         </select>
       </div>
     </div>
@@ -443,7 +444,7 @@ async function loadBuildings() {
   // zoomゲートは上限連動: 大口指定ほど広い画角(低zoom)まで許す。
   // z14固定だと視界に50万棟も入らず、上限を上げても意味がなかった(実測159k)。
   const limitSel = +$('bld-limit').value;
-  const minZ = limitSel >= 4000000 ? 7 : limitSel >= 2000000 ? 9 : limitSel >= 500000 ? 10.5 : limitSel >= 120000 ? 12 : 14;
+  const minZ = limitSel >= 29100000 ? 4 : limitSel >= 4000000 ? 7 : limitSel >= 2000000 ? 9 : limitSel >= 500000 ? 10.5 : limitSel >= 120000 ? 12 : 14;
   if (map.getZoom() < minZ) {
     renderer.setLayerVisible('buildings', false);
     const el = $('loadnote');
@@ -457,10 +458,10 @@ async function loadBuildings() {
   const limit = +$('bld-limit').value;
   const t0 = performance.now();
   // バイナリ経路: JRB wire(量子化+delta+varint) → ブラウザでデコード → deckのbinary attributesへ直行。
-  // 全関東(全量)はJRBファイル直送(サーバの再エンコード37秒を踏まない)。読了後は自動📌固定。
-  const wholeRegion = limit >= 6200000;
+  // 全量(全関東/全国)はJRBファイル直送(サーバの再エンコードを踏まない)。読了後は自動📌固定。
+  const wholeRegion = limit >= 29100000 ? 'japan' : limit >= 6200000 ? 'kanto' : null;
   const url = wholeRegion
-    ? '/api/buildings/region/kanto'
+    ? `/api/buildings/region/${wholeRegion}`
     : `/api/buildings?bbox=${pb.w},${pb.s},${pb.e},${pb.n}&center=${c0.lng},${c0.lat}&limit=${limit}&format=bin`;
   const res = await fetch(url);
   if (!res.ok) {
@@ -472,7 +473,15 @@ async function loadBuildings() {
   const bytes = +(res.headers.get('content-length') || 0);
   const ab = await res.arrayBuffer();
   const tFetch = performance.now();
-  const bin = jrbToBuildingBinary(ab, { defaultHeight: 8 });
+  { const el = $('loadnote'); el.textContent = `建物: デコード中…(${(ab.byteLength / 1e6).toFixed(0)}MB)`; }
+  let bin;
+  try {
+    bin = jrbToBuildingBinary(ab, { defaultHeight: 8 });
+  } catch (err) {
+    showPopup(`<b>デコード失敗(メモリ限界の可能性)</b><br><span class="k">${err.message}</span>`, { x: 40, y: 40 });
+    $('loadnote').style.display = 'none';
+    return;
+  }
   const tParse = performance.now();
   lastBuildingBinary = bin;   // onPickのindex→name/height引き当て用
   const r = { count: bin.length, truncated: !!bin.meta.truncated, binary: true };
@@ -495,7 +504,7 @@ async function loadBuildings() {
       id: 'buildings', type: 'polygons', zIndex: 6,
       data,
       style: { color: '#8d99ae', opacity: 220 },
-      pickable: true,
+      pickable: bin.length < 8000000,   // 巨大時はpickingバッファを作らない(タブ保護)
       onPick: (f, info) => {
         const i = info.index;
         if (i == null || i < 0 || !lastBuildingBinary) return;

@@ -86,7 +86,8 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
             startIndices: b.startIndices,
             attributes: {
               getPolygon: { value: b.positions, size: 2 },
-              getElevation: { value: b.heights, size: 1 },
+              // binary attributeは頂点ごと。建物ごと(heights)でなくheightsV(頂点展開済み)を渡す
+              getElevation: { value: b.heightsV || b.heights, size: 1 },
             },
           },
           _normalize: false,

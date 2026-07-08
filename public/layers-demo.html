@@ -462,7 +462,7 @@ async function loadBuildings() {
   const bytes = +(res.headers.get('content-length') || 0);
   const ab = await res.arrayBuffer();
   const tFetch = performance.now();
-  const bin = jrbToBuildingBinary(ab);
+  const bin = jrbToBuildingBinary(ab, { defaultHeight: 8 });
   const tParse = performance.now();
   lastBuildingBinary = bin;   // onPickのindex→name/height引き当て用
   const r = { count: bin.length, truncated: !!bin.meta.truncated, binary: true };
@@ -475,9 +475,7 @@ async function loadBuildings() {
     return;
   }
   showLoadNote('建物', r);
-  // binary: 高さ0の建物は既定8mへ(binary attributesはaccessor無しなので値側で補完)
-  for (let i = 0; i < bin.heights.length; i++) if (bin.heights[i] === 0) bin.heights[i] = 8;
-  const data = { binary: { length: bin.length, startIndices: bin.startIndices, positions: bin.positions, heights: bin.heights } };
+  const data = { binary: { length: bin.length, startIndices: bin.startIndices, positions: bin.positions, heightsV: bin.heightsV } };
   if (renderer.getLayers().some((l) => l.id === 'buildings')) {
     renderer.updateLayerData('buildings', data);
     renderer.setLayerVisible('buildings', true);

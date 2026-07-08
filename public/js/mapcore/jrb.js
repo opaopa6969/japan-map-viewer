@@ -103,7 +103,7 @@ export function decodeJrb(data) {
  *           heights: Float32Array(m), names: (string|null)[], meta }
  * リングは _windingOrder 既定(CW)に合わせて向きを正規化する(押し出しの側面が欠けないように)。
  */
-export function jrbToBuildingBinary(data) {
+export function jrbToBuildingBinary(data, { defaultHeight = 0 } = {}) {
   const jrb = decodeJrb(data);
   const { meta, names } = jrb;
   const quant = meta.quant || 1e5;
@@ -111,12 +111,17 @@ export function jrbToBuildingBinary(data) {
   const total = meta.totalPoints || 0;
   const positions = new Float64Array(total * 2);
   const startIndices = new Uint32Array(n + 1);
-  const heights = new Float32Array(n);
+  const heights = new Float32Array(n);          // 建物ごと(統計/クリック用)
+  const heightsV = new Float32Array(total);     // 頂点ごと(deckのbinary attributeはこちら!
+                                                //  建物ごと配列を渡すと頂点が他建物の高さを
+                                                //  読んで「針」が生える — 実測バグの教訓)
   const outNames = new Array(n);
   let vp = 0;   // 頂点書き込み位置(点単位)
   jrb.forEachWay((i, cls, nameIdx, value, count, readDelta) => {
     startIndices[i] = vp;
-    heights[i] = value / 10;   // dm -> m
+    const hM = value > 0 ? value / 10 : defaultHeight;   // dm -> m(0は既定値へ)
+    heights[i] = hM;
+    heightsV.fill(hM, vp, vp + count);
     outNames[i] = nameIdx >= 0 ? names[nameIdx] : null;
     const base = vp * 2;
     let x = 0;
@@ -146,5 +151,5 @@ export function jrbToBuildingBinary(data) {
     vp += count;
   });
   startIndices[n] = vp;
-  return { length: n, startIndices, positions, heights, names: outNames, meta };
+  return { length: n, startIndices, positions, heights, heightsV, names: outNames, meta };
 }

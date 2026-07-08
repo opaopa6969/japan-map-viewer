@@ -39,6 +39,9 @@ const buf = encodeRoads({
   ok(bin.length === 3, 'length=3');
   ok(bin.startIndices.length === 4 && bin.startIndices[3] === 11, 'startIndices末尾=totalPoints');
   ok(Math.abs(bin.heights[0] - 333.0) < 1e-4 && bin.heights[1] === 0, 'heights(dm→m)');
+  ok(bin.heightsV.length === 11, 'heightsVは頂点数ぶん');
+  ok(Math.abs(bin.heightsV[0] - 333.0) < 1e-4 && Math.abs(bin.heightsV[3] - 333.0) < 1e-4
+    && bin.heightsV[4] === 0, 'heightsVは各建物の高さが頂点範囲に展開される');
   ok(bin.names[0] === '東京タワー' && bin.names[1] === null, 'names配列');
   // 頂点集合はwinding正規化後も同じ(順序のみ変わりうる)
   const ring0 = new Set();

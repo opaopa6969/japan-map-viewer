@@ -102,7 +102,7 @@ function angleDelta(from, to) {
 // registry の spec(network/extrusion/movers/markers)を deck レイヤーへ写像する。
 // deck レイヤーid は `L|<specId>|<part>` — onClick で spec を引くのに使う。
 // insets からも呼ぶため純関数(deckNS と時刻を引数で受ける)。
-function buildCustomDeckLayers(deckNS, registry, tNow) {
+function buildCustomDeckLayers(deckNS, registry, tNow, cullBounds) {
   const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer, PathLayer, SolidPolygonLayer, Tile3DLayer } = deckNS;
   const out = [];
   for (const spec of registry.list()) {
@@ -125,6 +125,7 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
           // デコーダ分割済み(jrbToBuildingChunks) — そのままレイヤーデータ化してキャッシュ
           b._chunks = b.chunks.map((ch) => ({
             base: ch.base,
+            bbox: ch.bbox,   // 地理セル由来のチャンクなら視錐台カリングに使える
             data: {
               length: ch.length,
               startIndices: ch.startIndices,
@@ -164,9 +165,15 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
           }
         }
         for (const chunk of b._chunks) {
+          // 空間チャンク(bbox付き)は視界外をvisible:falseに。deckはリソースを保持した
+          // まま描画だけ飛ばすので、頂点シェーダのコストが視界内チャンク分だけになる
+          // (全国29M=1.88億頂点を常時流すと1フレーム140ms実測 → 街なら1〜2チャンクに落ちる)
+          const inView = !cullBounds || !chunk.bbox
+            || (chunk.bbox[0] <= cullBounds[2] && chunk.bbox[2] >= cullBounds[0]
+              && chunk.bbox[1] <= cullBounds[3] && chunk.bbox[3] >= cullBounds[1]);
           out.push(new SolidPolygonLayer({
             id: `L|${spec.id}|polygons|${chunk.base}`,
-          visible: spec.visible,
+            visible: spec.visible && inView,
             data: chunk.data,
             _normalize: false,
             // 重要: 既定はXYZ(頂点=3要素)。XY詰めなので明示しないと頂点が3個ずつ
@@ -466,9 +473,24 @@ export function createRendererDeck(container, opts = {}) {
     })];
   }
 
+  // カリング境界: 現在のビューポートを30%パディングした[lonMin,latMin,lonMax,latMax]。
+  // getBoundsは高ピッチだと地平線側へ大きく伸びる=保守的(見えるものを消さない方向)。
+  function cullBoundsOf(m) {
+    try {
+      const b = m.getBounds();
+      const w = b.getWest();
+      const s = b.getSouth();
+      const e = b.getEast();
+      const nn = b.getNorth();
+      const px = (e - w) * 0.3;
+      const py = (nn - s) * 0.3;
+      return [w - px, s - py, e + px, nn + py];
+    } catch (_) { return null; }
+  }
+
   function buildLayers() {
     // 下から: コロプレス → 点群/集約 → カスタムレイヤー(zIndex順)
-    return [...choroLayers(), ...modeLayers(), ...buildCustomDeckLayers(deck, registry, clock.now())];
+    return [...choroLayers(), ...modeLayers(), ...buildCustomDeckLayers(deck, registry, clock.now(), cullBoundsOf(map))];
   }
   function draw() {
     overlay.setProps({ layers: buildLayers() });
@@ -519,8 +541,8 @@ export function createRendererDeck(container, opts = {}) {
   const MAX_INSETS = 3;
   const insets = new Map(); // id -> { spec, el, map, overlay, bearing }
 
-  function insetLayers(spec) {
-    const custom = buildCustomDeckLayers(deck, registry, clock.now())
+  function insetLayers(spec, imap) {
+    const custom = buildCustomDeckLayers(deck, registry, clock.now(), imap ? cullBoundsOf(imap) : null)
       .filter((l) => !spec.layers || spec.layers.includes(String(l.id).split('|')[1]));
     if (spec.layers) return custom; // レイヤー指定があればカスタムのみ絞り込み
     return [...choroLayers(), ...modeLayers(), ...custom];
@@ -548,7 +570,7 @@ export function createRendererDeck(container, opts = {}) {
     imap.addControl(ioverlay);
     const inset = { spec: { viewMode: 'north-up', ...spec, rect }, el, map: imap, overlay: ioverlay, bearing: 0 };
     insets.set(spec.id, inset);
-    imap.once('load', () => ioverlay.setProps({ layers: insetLayers(inset.spec) }));
+    imap.once('load', () => ioverlay.setProps({ layers: insetLayers(inset.spec, imap) }));
     return inset.spec;
   }
   function removeInset(id) {
@@ -571,7 +593,7 @@ export function createRendererDeck(container, opts = {}) {
   function drawInsets() {
     for (const it of insets.values()) {
       if (!it.map.loaded()) continue;
-      it.overlay.setProps({ layers: insetLayers(it.spec) });
+      it.overlay.setProps({ layers: insetLayers(it.spec, it.map) });
     }
   }
   function tickInsets() {
@@ -587,6 +609,30 @@ export function createRendererDeck(container, opts = {}) {
       }
       it.map.jumpTo({ center: [pos.lon, pos.lat], zoom: cam.zoom ?? it.map.getZoom(), bearing });
     }
+  }
+
+  // --- 視錐台カリングの再判定 ---------------------------------------------------
+  // 空間チャンク(bbox付きbinaryポリゴン)を持つレイヤーがある時だけ、カメラが
+  // 「画面幅の10%移動 or zoom0.25」動いたら150msスロットルでdraw()し直す。
+  // draw()はvisibleプロパティの差分だけなのでdeck側の再アップロードは起きない。
+  let cullLast = { x: 0, y: 0, z: 0, t: -1 };
+  function needsRecull(ts) {
+    let has = false;
+    for (const spec of registry.list()) {
+      const b = spec.type === 'polygons' && spec.data && spec.data.binary;
+      if (b && b._chunks && b._chunks.length > 1 && b._chunks[0].bbox) { has = true; break; }
+    }
+    if (!has) return false;
+    if (ts - cullLast.t < 150) return false;
+    const ctr = map.getCenter();
+    const z = map.getZoom();
+    if (cullLast.t >= 0) {
+      const spanX = 360 / Math.pow(2, z);   // 概算の画面経度スパン
+      const moved = Math.abs(ctr.lng - cullLast.x) + Math.abs(ctr.lat - cullLast.y);
+      if (moved < spanX * 0.1 && Math.abs(z - cullLast.z) < 0.25) return false;
+    }
+    cullLast = { x: ctr.lng, y: ctr.lat, z, t: ts };
+    return true;
   }
 
   // --- 毎フレーム処理: アンビエント演出 / movers / heading-up 追従 -------------------
@@ -610,6 +656,7 @@ export function createRendererDeck(container, opts = {}) {
     // 毎フレームdraw()=全レイヤー再構築するとメインスレッドを無駄に食う(建物20万棟で
     // lag15ms実測)ので、movers稼働中かmodelありのpulse時のみ再構築する。
     if ((state.anim && state.mode === 'points' && model) || moving) draw();
+    else if (needsRecull(ts)) draw();
     else if (insets.size) drawInsets();
     tickInsets();
     rafId = requestAnimationFrame(tick);

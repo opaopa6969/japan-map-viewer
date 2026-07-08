@@ -94,6 +94,24 @@ export function decodeJrb(data) {
     return { class: cls, name: nIdx ? names[nIdx - 1] : null, value, coords };
   }
 
+  /** ヘッダ+先頭点(アンカー座標・量子化int)を読む。空間チャンク割当用。 */
+  function wayMeta(i) {
+    let p = waysStart + offsets[i];
+    const cls = u8[p++];
+    let nIdx;
+    [nIdx, p] = readVarint(u8, p);
+    let value = 0;
+    if (hasValues) [value, p] = readVarint(u8, p);
+    let count;
+    [count, p] = readVarint(u8, p);
+    let v;
+    [v, p] = readVarint(u8, p);
+    const x0 = zigzag(v);
+    [v, p] = readVarint(u8, p);
+    const y0 = zigzag(v);
+    return { cls, nameIdx: nIdx - 1, value, count, x0, y0 };
+  }
+
   /** ヘッダだけ読む(offsets表で直ジャンプ、座標は読まない)。チャンク計画用。 */
   function headerOf(i) {
     let p = waysStart + offsets[i];
@@ -107,7 +125,7 @@ export function decodeJrb(data) {
     return { cls, nameIdx: nIdx - 1, value, count };
   }
 
-  return { meta, names, count: meta.wayCount, decodeWay, forEachWay, headerOf };
+  return { meta, names, count: meta.wayCount, decodeWay, forEachWay, headerOf, wayMeta };
 }
 
 /**
@@ -179,53 +197,104 @@ export function jrbToBuildingBinary(data, { defaultHeight = 0 } = {}) {
  * 2パス目=1回のforEachWayで各チャンクへ充填(二度デコードしない)。
  * @returns { chunks: [{base, length, startIndices, positions, heightsV, heights, names}], meta, totalPoints }
  */
-export function jrbToBuildingChunks(data, { defaultHeight = 0, maxVerts = 6000000, withNames = true } = {}) {
+// Mortonコード(Z階数曲線): gx,gyのbitを交互に編む。行順(緯度帯)だとチャンクが
+// 日本を横断する細長い帯になり街ビューでも6〜7チャンク掛かる(実測36M頂点)。
+// Z順なら近傍セルが正方形ブロックに固まり、街ビューは1〜3チャンクで済む。
+function mortonOf(gx, gy) {
+  let code = 0;
+  for (let b = 0; b < 14; b++) {
+    code += ((gx >> b) & 1) * Math.pow(2, 2 * b) + ((gy >> b) & 1) * Math.pow(2, 2 * b + 1);
+  }
+  return code;
+}
+
+export function jrbToBuildingChunks(data, { defaultHeight = 0, maxVerts = 1500000, withNames = true, spatial = true, cellDeg = 0.1 } = {}) {
   const jrb = decodeJrb(data);
   const { meta, names } = jrb;
   const quant = meta.quant || 1e5;
   const n = meta.wayCount;
 
-  // パス1: 点数だけ(ヘッダ直読み)
+  // パス1: ヘッダ+アンカー点(空間セル割当)。offsets表があるのでO(n)・座標全走査なし
   const counts = new Uint32Array(n);
+  const cellOf = new Float64Array(n);   // cellId(整数だが範囲が広いのでf64)
   let totalPoints = 0;
+  const cellQ = Math.round(cellDeg * quant);
+  const cellVerts = new Map();          // cellId -> 頂点数
   for (let i = 0; i < n; i++) {
-    counts[i] = jrb.headerOf(i).count;
-    totalPoints += counts[i];
+    const m = jrb.wayMeta(i);
+    counts[i] = m.count;
+    totalPoints += m.count;
+    let cid = 0;
+    if (spatial) {
+      const gx = Math.floor(m.x0 / cellQ) + 4000;
+      const gy = Math.floor(m.y0 / cellQ) + 4000;
+      cid = gx * 100000 + gy;
+    }
+    cellOf[i] = cid;
+    cellVerts.set(cid, (cellVerts.get(cid) || 0) + m.count);
   }
 
-  // チャンク境界(頂点予算で切る)
-  const bounds = [0];
+  if (n === 0) return { chunks: [], meta, totalPoints: 0, count: 0 };
+
+  // セルをMorton順(Z階数曲線)に並べ、way列をセル順に再配列(counting sort・O(n))。
+  // その順でway単位に頂点予算の貪欲詰め — 近傍セルが正方形ブロックに束ねられ、
+  // 予算超過の巨大セルも正しく複数チャンクへ割れる(セル内はファイル順を保つ)
+  const cellIds = [...cellVerts.keys()].sort((a, b) => {
+    const ma = mortonOf(Math.floor(a / 100000), a % 100000);
+    const mb = mortonOf(Math.floor(b / 100000), b % 100000);
+    return ma - mb;
+  });
+  const rankOf = new Map();
+  cellIds.forEach((cid, r) => rankOf.set(cid, r));
+  const cursor = new Uint32Array(cellIds.length + 1);
+  for (let i = 0; i < n; i++) cursor[rankOf.get(cellOf[i]) + 1]++;
+  for (let r = 0; r < cellIds.length; r++) cursor[r + 1] += cursor[r];
+  const orderBuf = new Uint32Array(n);
+  for (let i = 0; i < n; i++) orderBuf[cursor[rankOf.get(cellOf[i])]++] = i;
+  const wayChunk = new Uint32Array(n);
+  let nChunks = 0;
   let acc = 0;
+  for (let k = 0; k < n; k++) {
+    const i = orderBuf[k];
+    const v = counts[i];
+    if (acc > 0 && acc + v > maxVerts) { nChunks++; acc = 0; }
+    wayChunk[i] = nChunks;
+    acc += v;
+  }
+  nChunks++;
+
+  // チャンクごとの確保(サイズは事前集計で正確に)
+  const cWays = new Uint32Array(nChunks);
+  const cVerts = new Uint32Array(nChunks);
   for (let i = 0; i < n; i++) {
-    if (acc + counts[i] > maxVerts && acc > 0) { bounds.push(i); acc = 0; }
-    acc += counts[i];
+    const ch = wayChunk[i];
+    cWays[ch]++;
+    cVerts[ch] += counts[i];
   }
-  bounds.push(n);
-
-  // チャンクごとに正確なサイズで確保
   const chunks = [];
-  for (let ci = 0; ci < bounds.length - 1; ci++) {
-    const s = bounds[ci];
-    const e = bounds[ci + 1];
-    let verts = 0;
-    for (let i = s; i < e; i++) verts += counts[i];
+  let baseAcc = 0;
+  for (let ci = 0; ci < nChunks; ci++) {
     chunks.push({
-      base: s, length: e - s,
-      startIndices: new Uint32Array(e - s + 1),
-      positions: new Float64Array(verts * 2),
-      heightsV: new Float32Array(verts),
-      heights: new Float32Array(e - s),
-      names: withNames ? new Array(e - s) : null,
+      base: baseAcc, length: cWays[ci],
+      startIndices: new Uint32Array(cWays[ci] + 1),
+      positions: new Float64Array(cVerts[ci] * 2),
+      heightsV: new Float32Array(cVerts[ci]),
+      heights: new Float32Array(cWays[ci]),
+      names: withNames ? new Array(cWays[ci]) : null,
+      bbox: null,
+      _mnx: Infinity, _mny: Infinity, _mxx: -Infinity, _mxy: -Infinity,
     });
+    baseAcc += cWays[ci];
   }
+  const wCur = new Uint32Array(nChunks);
+  const vCur = new Uint32Array(nChunks);
 
-  // パス2: 1回の走査で充填(winding CW正規化込み)
-  let ci = 0;
-  let vp = 0;   // 現チャンク内の頂点位置
+  // パス2: 1回の走査で各チャンクへ充填(winding CW正規化+チャンクbbox集計込み)
   jrb.forEachWay((i, cls, nameIdx, value, count, readDelta) => {
-    if (i >= bounds[ci + 1]) { ci++; vp = 0; }
+    const ci = wayChunk[i];
     const ch = chunks[ci];
-    const li = i - ch.base;
+    const li = wCur[ci]++;
+    const vp = vCur[ci];
     ch.startIndices[li] = vp;
     const hM = value > 0 ? value / 10 : defaultHeight;
     ch.heights[li] = hM;
@@ -244,6 +313,10 @@ export function jrbToBuildingChunks(data, { defaultHeight = 0, maxVerts = 600000
       y += dy;
       pos[base + j * 2] = x / quant;
       pos[base + j * 2 + 1] = y / quant;
+      if (x < ch._mnx) ch._mnx = x;
+      if (y < ch._mny) ch._mny = y;
+      if (x > ch._mxx) ch._mxx = x;
+      if (y > ch._mxy) ch._mxy = y;
       if (j > 0) area2 += (px * y - x * py);
     }
     if (area2 > 0) {
@@ -256,9 +329,16 @@ export function jrbToBuildingChunks(data, { defaultHeight = 0, maxVerts = 600000
         pos[base + b * 2 + 1] = ay;
       }
     }
-    vp += count;
-    if (li === ch.length - 1) ch.startIndices[ch.length] = vp;
+    vCur[ci] = vp + count;
   });
+  for (let ci = 0; ci < nChunks; ci++) {
+    const ch = chunks[ci];
+    ch.startIndices[ch.length] = vCur[ci];
+    if (ch._mnx !== Infinity) {
+      ch.bbox = [ch._mnx / quant, ch._mny / quant, ch._mxx / quant, ch._mxy / quant];
+    }
+    delete ch._mnx; delete ch._mny; delete ch._mxx; delete ch._mxy;
+  }
 
   return { chunks, meta, totalPoints, count: n };
 }

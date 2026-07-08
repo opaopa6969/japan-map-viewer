@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, normalize, extname } from 'node:path';
-import { openRoads } from './lib/road-codec.mjs';
+import { openRoads, createRoadsEncoder } from './lib/road-codec.mjs';
 import { gzipSync } from 'node:zlib';
 import { cpus, totalmem, platform, release } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -291,18 +291,22 @@ async function serveBuildings(req, res, path) {
     res.end(JSON.stringify({ error: 'bbox=lon0,lat0,lon1,lat1 か center=lon,lat&radius=m が必要' }));
     return;
   }
-  const limit = Math.min(200000, +(q.get('limit') || 3000));
+  // format=bin: JRBバイナリで返す(100万棟級の本命経路。JSONは互換用に20万まで)
+  const wantBin = q.get('format') === 'bin';
+  const limit = Math.min(wantBin ? 1000000 : 200000, +(q.get('limit') || 3000));
   // 上限超過時の切り詰めは「注視点から近い順」(codecのqueryBboxがセル走査から中心優先)。
   // ピッチをつけたカメラではgetBounds()のbbox中心が地平線方向へ大きくズレるため、
   // クライアントは center=lon,lat(map.getCenter()=実際の注視点)を渡すこと。
   const center = hasCenter ? centerRaw : [(bboxRaw[0] + bboxRaw[2]) / 2, (bboxRaw[1] + bboxRaw[3]) / 2];
   const kLat = 111320;
   const kLon = 111320 * Math.cos(center[1] * Math.PI / 180);
-  const polygons = [];
+
+  // 添字だけ先に集める(デコード前なので軽い)
+  const picked = [];   // {handle, i}
   let truncated = false;
   for (const { handle } of handles) {
-    if (polygons.length >= limit) { truncated = true; break; }
-    const r = handle.queryBbox(bboxRaw, { maxWays: limit - polygons.length, center });
+    if (picked.length >= limit) { truncated = true; break; }
+    const r = handle.queryBbox(bboxRaw, { maxWays: limit - picked.length, center });
     truncated = truncated || r.truncated;
     for (const i of r.indices) {
       if (radius) {
@@ -312,10 +316,45 @@ async function serveBuildings(req, res, path) {
         const dy = ((mny + mxy) / 2 / 1e5 - center[1]) * kLat;
         if (dx * dx + dy * dy > radius * radius) continue;
       }
-      const w = handle.decodeWay(i);
-      polygons.push({ id: `${handle.meta.region}:${i}`, name: w.name, height: w.value / 10, ring: w.coords });
+      picked.push({ handle, i });
     }
   }
+
+  if (wantBin) {
+    // 選んだwayをJRBに再エンコードして返す。座標はデコード→再量子化(可逆)。
+    // ブラウザ側は mapcore/jrb.js の jrbToBuildingBinary が deck の binary attributes へ直行。
+    const enc = createRoadsEncoder({
+      region: 'query', source: 'api/buildings', classLabels: ['building'], withValues: true,
+      extraMeta: { truncated, radius: radius ?? null },
+    });
+    let scratch = new Int32Array(1024);
+    for (const { handle, i } of picked) {
+      const w = handle.decodeWay(i);
+      if (w.coords.length * 2 > scratch.length) scratch = new Int32Array(w.coords.length * 2);
+      for (let j = 0; j < w.coords.length; j++) {
+        scratch[j * 2] = Math.round(w.coords[j][0] * 1e5);
+        scratch[j * 2 + 1] = Math.round(w.coords[j][1] * 1e5);
+      }
+      enc.addWay({ cls: 0, name: w.name, value: w.value, coordsQ: scratch, count: w.coords.length });
+    }
+    const bin = enc.finish();
+    const accept = String(req.headers['accept-encoding'] || '');
+    const binHeaders = { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store' };
+    if (accept.includes('gzip')) {
+      const gz = gzipSync(bin);
+      res.writeHead(200, { ...binHeaders, 'Content-Encoding': 'gzip', 'Content-Length': gz.length });
+      res.end(gz);
+    } else {
+      res.writeHead(200, { ...binHeaders, 'Content-Length': bin.length });
+      res.end(bin);
+    }
+    return;
+  }
+
+  const polygons = picked.map(({ handle, i }) => {
+    const w = handle.decodeWay(i);
+    return { id: `${handle.meta.region}:${i}`, name: w.name, height: w.value / 10, ring: w.coords };
+  });
   send({ count: polygons.length, truncated, radius, polygons });
 }
 

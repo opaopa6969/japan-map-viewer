@@ -65,9 +65,17 @@ export function validateLayerSpec(spec) {
   } else if (spec.type === 'markers') {
     if (!Array.isArray(d.points)) throw new Error('markers は data.points[] が必要');
   } else if (spec.type === 'polygons') {
-    if (!Array.isArray(d.polygons)) throw new Error('polygons は data.polygons[] が必要');
-    for (const p of d.polygons) {
-      if (!Array.isArray(p.ring) || p.ring.length < 3) throw new Error(`polygons ${p.id}: ring[[lon,lat],...] (3点以上) が必要`);
+    if (d.binary) {
+      // binary attributes経路(jrb.js の jrbToBuildingBinary 出力): フラット型付き配列
+      const b = d.binary;
+      if (!Number.isFinite(b.length) || !b.startIndices || !b.positions) {
+        throw new Error('polygons(binary) は {length, startIndices, positions} が必要');
+      }
+    } else {
+      if (!Array.isArray(d.polygons)) throw new Error('polygons は data.polygons[] か data.binary が必要');
+      for (const p of d.polygons) {
+        if (!Array.isArray(p.ring) || p.ring.length < 3) throw new Error(`polygons ${p.id}: ring[[lon,lat],...] (3点以上) が必要`);
+      }
     }
   } else if (spec.type === 'tiles3d') {
     if (typeof d.url !== 'string' || !d.url) throw new Error('tiles3d は data.url(tileset.json) が必要');

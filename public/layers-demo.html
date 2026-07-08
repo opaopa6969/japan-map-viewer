@@ -107,7 +107,9 @@
           <option value="30000" selected>30,000</option>
           <option value="60000">60,000</option>
           <option value="120000">120,000</option>
-          <option value="200000">200,000 (最大)</option>
+          <option value="200000">200,000</option>
+          <option value="500000">500,000 (⚠数秒固まる)</option>
+          <option value="1000000">1,000,000 (⚠実験)</option>
         </select>
       </div>
     </div>
@@ -130,6 +132,7 @@
 
 <script type="module">
 import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
+import { jrbToBuildingBinary } from '/js/mapcore/jrb.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -404,6 +407,7 @@ function showLoadNote(kind, r) {
   }
 }
 let bldMoveHandler = null;
+let lastBuildingBinary = null;
 async function loadBuildings() {
   const map = renderer.getMap();
   if (map.getZoom() < 14) { renderer.setLayerVisible('buildings', false); $('loadnote').style.display = 'none'; return; }
@@ -411,13 +415,24 @@ async function loadBuildings() {
   const c0 = map.getCenter();   // ピッチ時はbbox中心が地平線側へズレるため注視点を明示
   const limit = +$('bld-limit').value;
   const t0 = performance.now();
-  const res = await fetch(`/api/buildings?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&center=${c0.lng},${c0.lat}&limit=${limit}`);
+  // バイナリ経路: JRB wire(量子化+delta+varint) → ブラウザでデコード → deckのbinary attributesへ直行。
+  // JSON(100万棟≈250MB)のparseとオブジェクト走査を丸ごとスキップする。
+  const res = await fetch(`/api/buildings?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&center=${c0.lng},${c0.lat}&limit=${limit}&format=bin`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    showPopup(`<b>OSM建物データ未生成</b><br><span class="k">${err.error || ''}</span>`, { x: 40, y: 40 });
+    $('ly-buildings').checked = false;
+    return;
+  }
   const bytes = +(res.headers.get('content-length') || 0);
+  const ab = await res.arrayBuffer();
   const tFetch = performance.now();
-  const r = await res.json();
+  const bin = jrbToBuildingBinary(ab);
   const tParse = performance.now();
-  dbg.lastFetch = { kind: '建物', count: r.polygons ? r.polygons.length : 0,
-    verts: r.polygons ? r.polygons.reduce((t, p) => t + p.ring.length, 0) : 0,
+  lastBuildingBinary = bin;   // onPickのindex→name/height引き当て用
+  const r = { count: bin.length, truncated: !!bin.meta.truncated, binary: true };
+  dbg.lastFetch = { kind: '建物(bin)', count: bin.length,
+    verts: bin.meta.totalPoints || 0,
     fetchMs: tFetch - t0, parseMs: tParse - tFetch, bytes };
   if (r.error) {
     showPopup(`<b>OSM建物データ未生成</b><br><span class="k">${r.error}</span>`, { x: 40, y: 40 });
@@ -425,17 +440,25 @@ async function loadBuildings() {
     return;
   }
   showLoadNote('建物', r);
+  // binary: 高さ0の建物は既定8mへ(binary attributesはaccessor無しなので値側で補完)
+  for (let i = 0; i < bin.heights.length; i++) if (bin.heights[i] === 0) bin.heights[i] = 8;
+  const data = { binary: { length: bin.length, startIndices: bin.startIndices, positions: bin.positions, heights: bin.heights } };
   if (renderer.getLayers().some((l) => l.id === 'buildings')) {
-    renderer.updateLayerData('buildings', { polygons: r.polygons });
+    renderer.updateLayerData('buildings', data);
     renderer.setLayerVisible('buildings', true);
   } else {
     renderer.addLayer({
       id: 'buildings', type: 'polygons', zIndex: 6,
-      data: { polygons: r.polygons },
-      style: { color: '#8d99ae', defaultHeight: 8, opacity: 220 },
+      data,
+      style: { color: '#8d99ae', opacity: 220 },
       pickable: true,
-      onPick: (f, info) => f && showPopup(
-        `<b>${f.name || '(名無し建物)'}</b><br><span class="k">高さ:</span> ${f.height ? f.height + 'm' : '不明(既定8m)'}`, info),
+      onPick: (f, info) => {
+        const i = info.index;
+        if (i == null || i < 0 || !lastBuildingBinary) return;
+        const name = lastBuildingBinary.names[i];
+        const h = lastBuildingBinary.heights[i];
+        showPopup(`<b>${name || '(名無し建物)'}</b><br><span class="k">高さ:</span> ${h}m`, info);
+      },
     });
   }
 }

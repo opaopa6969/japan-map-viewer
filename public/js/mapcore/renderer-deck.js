@@ -74,15 +74,38 @@ function buildCustomDeckLayers(deckNS, registry, tNow) {
     if (!spec.visible) continue;
     const st = spec.style;
     if (spec.type === 'polygons') {
-      out.push(new SolidPolygonLayer({
-        id: `L|${spec.id}|polygons`,
-        data: spec.data.polygons,
-        extruded: true,
-        getPolygon: (p) => p.ring,
-        getElevation: (p) => (p.height || st.defaultHeight || 8) * (st.heightScale ?? 1),
-        getFillColor: (p) => hexToRgb(p.color || st.color || '#8d99ae').concat(st.opacity ?? 230),
-        pickable: spec.pickable,
-      }));
+      if (spec.data.binary) {
+        // binary attributes経路(mapcore/jrb.js の jrbToBuildingBinary 出力)。
+        // 100万棟級: JSONもオブジェクト走査も無しでフラット配列がGPUへ直行する。
+        // ring向きはデコーダがCW正規化済み(_windingOrder既定と一致)。
+        const b = spec.data.binary;
+        out.push(new SolidPolygonLayer({
+          id: `L|${spec.id}|polygons`,
+          data: {
+            length: b.length,
+            startIndices: b.startIndices,
+            attributes: {
+              getPolygon: { value: b.positions, size: 2 },
+              getElevation: { value: b.heights, size: 1 },
+            },
+          },
+          _normalize: false,
+          extruded: true,
+          elevationScale: st.heightScale ?? 1,
+          getFillColor: hexToRgb(st.color || '#8d99ae').concat(st.opacity ?? 230),
+          pickable: spec.pickable,
+        }));
+      } else {
+        out.push(new SolidPolygonLayer({
+          id: `L|${spec.id}|polygons`,
+          data: spec.data.polygons,
+          extruded: true,
+          getPolygon: (p) => p.ring,
+          getElevation: (p) => (p.height || st.defaultHeight || 8) * (st.heightScale ?? 1),
+          getFillColor: (p) => hexToRgb(p.color || st.color || '#8d99ae').concat(st.opacity ?? 230),
+          pickable: spec.pickable,
+        }));
+      }
     } else if (spec.type === 'tiles3d') {
       // PLATEAU等の3D Tiles(tileset.json+b3dm)。deckのUMDバンドルに入っている
       // Tile3DLayer(geo-layers)を使う。視点連動のLODストリーミングはdeck任せ。
@@ -254,7 +277,7 @@ export function createRendererDeck(container, opts = {}) {
     const lid = info && info.layer && String(info.layer.id || '');
     if (!lid || !lid.startsWith('L|')) return;
     const spec = registry.get(lid.split('|')[1]);
-    if (spec && spec.onPick) spec.onPick(info.object ?? null, { layerId: spec.id, x: info.x, y: info.y });
+    if (spec && spec.onPick) spec.onPick(info.object ?? null, { layerId: spec.id, x: info.x, y: info.y, index: info.index });
   }
 
   const overlay = new deck.MapboxOverlay({

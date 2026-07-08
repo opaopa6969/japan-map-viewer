@@ -180,7 +180,21 @@ export function createRenderer2D(canvas, opts = {}) {
       if (!spec.visible) continue;
       const st = spec.style;
       ctx.save();
-      if (spec.type === 'paths') {
+      if (spec.type === 'polygons') {
+        // 2Dは押し出せないのでフットプリント塗り(高さは濃度に反映)
+        const maxH = spec.data.polygons.reduce((m, p) => Math.max(m, p.height || 0), 0) || 1;
+        for (const p of spec.data.polygons) {
+          ctx.beginPath();
+          p.ring.forEach(([lon, lat], i) => {
+            const [x, y] = llToScreen(lat, lon);
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+          });
+          ctx.closePath();
+          ctx.fillStyle = p.color || st.color || '#8d99ae';
+          ctx.globalAlpha = 0.35 + 0.5 * Math.min(1, (p.height || 0) / maxH);
+          ctx.fill();
+        }
+      } else if (spec.type === 'paths') {
         ctx.lineWidth = (st.width ?? 1.5) * r;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
@@ -412,7 +426,7 @@ export function createRenderer2D(canvas, opts = {}) {
     setLayerVisible(id, v) { const r = registry.setVisible(id, v); maintainLoop(); draw(); return r; },
     updateLayerData(id, data) { const r = registry.updateData(id, data); maintainLoop(); draw(); return r; },
     reorderLayers(ids) { registry.reorder(ids); draw(); },
-    supportsLayerType(t) { return LAYER_TYPES.includes(t); },
+    supportsLayerType(t) { return t !== 'tiles3d' && LAYER_TYPES.includes(t); },   // 3D TilesはGL専用
     getLayers() { return registry.toJSON(); },
 
     // --- カメラ演出・表示モード ---

@@ -59,6 +59,8 @@
       <label class="chk row"><input type="checkbox" id="ly-realrail"> 🛤 実路線・全国 (paths / 約10MB)</label>
       <label class="chk row"><input type="checkbox" id="ly-highway"> 🛣 実高速道路・全国 (N06 / 約3MB)</label>
       <label class="chk row"><input type="checkbox" id="ly-osmroads"> 🚗 実道路 (OSM / ビューポート連動)</label>
+      <label class="chk row"><input type="checkbox" id="ly-buildings"> 🏢 実建物 (OSM / zoom14+)</label>
+      <label class="chk row"><input type="checkbox" id="ly-plateau"> 🏙 PLATEAU 3D Tiles (千代田区)</label>
       <button class="btn" id="shinkansen">🚅 東海道新幹線を実線路で走らせる</button>
       <p class="sub">路線クリックで路線名/会社(高速は供用年)。データは /api/railways/… でも検索可。
         OSM道路は要 <code>npm run fetch:osm-roads</code>(ズームに応じ /api/roads?bbox= から取得)</p>
@@ -318,6 +320,63 @@ $('ly-osmroads').addEventListener('change', (e) => {
     if (roadsMoveHandler) map.off('moveend', roadsMoveHandler);
     roadsMoveHandler = null;
     renderer.setLayerVisible('osmroads', false);
+  }
+});
+
+// OSM建物: zoom14+ でビューポートの建物を /api/buildings から取得し押し出し表示。
+let bldMoveHandler = null;
+async function loadBuildings() {
+  const map = renderer.getMap();
+  if (map.getZoom() < 14) { renderer.setLayerVisible('buildings', false); return; }
+  const b = map.getBounds();
+  const res = await fetch(`/api/buildings?bbox=${b.getWest()},${b.getSouth()},${b.getEast()},${b.getNorth()}&limit=6000`);
+  const r = await res.json();
+  if (r.error) {
+    showPopup(`<b>OSM建物データ未生成</b><br><span class="k">${r.error}</span>`, { x: 40, y: 40 });
+    $('ly-buildings').checked = false;
+    return;
+  }
+  if (renderer.getLayers().some((l) => l.id === 'buildings')) {
+    renderer.updateLayerData('buildings', { polygons: r.polygons });
+    renderer.setLayerVisible('buildings', true);
+  } else {
+    renderer.addLayer({
+      id: 'buildings', type: 'polygons', zIndex: 6,
+      data: { polygons: r.polygons },
+      style: { color: '#8d99ae', defaultHeight: 8, opacity: 220 },
+      pickable: true,
+      onPick: (f, info) => f && showPopup(
+        `<b>${f.name || '(名無し建物)'}</b><br><span class="k">高さ:</span> ${f.height ? f.height + 'm' : '不明(既定8m)'}`, info),
+    });
+  }
+}
+$('ly-buildings').addEventListener('change', (e) => {
+  const map = renderer.getMap();
+  if (e.target.checked) {
+    if (map.getZoom() < 14) renderer.focusOn({ lat: 35.681, lon: 139.767, zoom: 15, pitch: 55, duration: 1500 });
+    loadBuildings();
+    bldMoveHandler = () => loadBuildings();
+    map.on('moveend', bldMoveHandler);
+  } else {
+    if (bldMoveHandler) map.off('moveend', bldMoveHandler);
+    bldMoveHandler = null;
+    renderer.setLayerVisible('buildings', false);
+  }
+});
+
+// PLATEAU 3D Tiles(実測高さの3D都市モデル)。deckのTile3DLayerがLODストリーミング。
+$('ly-plateau').addEventListener('change', (e) => {
+  if (e.target.checked) {
+    if (!renderer.getLayers().some((l) => l.id === 'plateau')) {
+      renderer.addLayer({
+        id: 'plateau', type: 'tiles3d', zIndex: 7,
+        data: { url: '/data/plateau/13101/13101_chiyoda-ku_notexture/tileset.json' },
+        style: { opacity: 1 },
+      });
+    } else renderer.setLayerVisible('plateau', true);
+    renderer.focusOn({ lat: 35.685, lon: 139.755, zoom: 14.5, pitch: 60, duration: 1500 });
+  } else {
+    renderer.setLayerVisible('plateau', false);
   }
 });
 

@@ -217,11 +217,68 @@ async function serveRoads(req, res, path) {
   send({ count: paths.length, truncated, paths });
 }
 
+// --- OSM建物 API (/api/buildings) ---------------------------------------------------
+// data/osm-buildings-*.jrb(JRB v2、value=高さdm)をオンメモリに開き、bboxで部分配信。
+//   GET /api/buildings/meta
+//   GET /api/buildings?bbox=lon0,lat0,lon1,lat1&limit=3000
+let buildingsHandles = null;
+async function buildings() {
+  if (!buildingsHandles) {
+    buildingsHandles = [];
+    let files = [];
+    try { files = (await readdir(join(root, 'data'))).filter((f) => /^osm-buildings-.*\.jrb$/.test(f)); } catch { /* 無し */ }
+    for (const f of files) {
+      try {
+        const handle = openRoads(await readFile(join(root, 'data', f)), { cellDeg: 0.02 });
+        buildingsHandles.push({ file: f, handle });
+        console.log(`  buildings: ${f} loaded (${handle.count.toLocaleString()} polygons)`);
+      } catch (e) { console.error(`  buildings: ${f} 読み込み失敗: ${e.message}`); }
+    }
+  }
+  return buildingsHandles;
+}
+
+async function serveBuildings(req, res, path) {
+  const headers = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+  const q = new URL(req.url, 'http://x').searchParams;
+  const handles = await buildings();
+  const send = (obj) => { res.writeHead(200, headers); res.end(JSON.stringify(obj)); };
+  if (!handles.length) {
+    res.writeHead(404, headers);
+    res.end(JSON.stringify({ error: 'osm-buildings-*.jrb が無い。先に `npm run fetch:osm-buildings -- --region <region>` を実行。' }));
+    return;
+  }
+  if (path === '/api/buildings/meta') {
+    send({ regions: handles.map(({ file, handle }) => ({ file, ...handle.meta })) });
+    return;
+  }
+  const bboxRaw = (q.get('bbox') || '').split(',').map(Number);
+  if (bboxRaw.length !== 4 || bboxRaw.some((v) => !Number.isFinite(v))) {
+    res.writeHead(400, headers);
+    res.end(JSON.stringify({ error: 'bbox=lon0,lat0,lon1,lat1 が必要' }));
+    return;
+  }
+  const limit = Math.min(20000, +(q.get('limit') || 3000));
+  const polygons = [];
+  let truncated = false;
+  for (const { handle } of handles) {
+    const r = handle.queryBbox(bboxRaw, { maxWays: limit - polygons.length });
+    truncated = truncated || r.truncated;
+    for (const i of r.indices) {
+      const w = handle.decodeWay(i);
+      polygons.push({ id: `${handle.meta.region}:${i}`, name: w.name, height: w.value / 10, ring: w.coords });
+    }
+    if (polygons.length >= limit) { truncated = true; break; }
+  }
+  send({ count: polygons.length, truncated, polygons });
+}
+
 const server = createServer(async (req, res) => {
   let path = (req.url || '/').split('?')[0];
   if (path === '/api/address-points') { serveAddressPoints(req, res); return; }
   if (path === '/api/railways' || path.startsWith('/api/railways/')) { serveRailways(req, res, path); return; }
   if (path === '/api/roads' || path.startsWith('/api/roads/')) { serveRoads(req, res, path); return; }
+  if (path === '/api/buildings' || path.startsWith('/api/buildings/')) { serveBuildings(req, res, path); return; }
   if (ALIASES[path]) path = ALIASES[path];
   const file = normalize(join(PUBLIC, path));
   if (!file.startsWith(PUBLIC)) { res.writeHead(403); res.end(); return; }

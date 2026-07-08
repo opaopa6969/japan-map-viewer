@@ -12,6 +12,7 @@
     "fetch:railways": "node scripts/fetch-railways.mjs",
     "fetch:highways": "node scripts/fetch-highways.mjs",
     "fetch:osm-roads": "node scripts/fetch-osm-roads.mjs",
+    "fetch:osm-buildings": "node scripts/fetch-osm-buildings.mjs",
     "fetch:plateau": "node scripts/fetch-plateau.mjs",
     "fetch:terrain": "node scripts/fetch-terrain.mjs",
     "build:changes": "node scripts/build-municipality-changes.mjs",

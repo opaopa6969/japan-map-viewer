@@ -68,12 +68,33 @@ function angleDelta(from, to) {
 // deck レイヤーid は `L|<specId>|<part>` — onClick で spec を引くのに使う。
 // insets からも呼ぶため純関数(deckNS と時刻を引数で受ける)。
 function buildCustomDeckLayers(deckNS, registry, tNow) {
-  const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer, PathLayer } = deckNS;
+  const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer, PathLayer, SolidPolygonLayer, Tile3DLayer } = deckNS;
   const out = [];
   for (const spec of registry.list()) {
     if (!spec.visible) continue;
     const st = spec.style;
-    if (spec.type === 'paths') {
+    if (spec.type === 'polygons') {
+      out.push(new SolidPolygonLayer({
+        id: `L|${spec.id}|polygons`,
+        data: spec.data.polygons,
+        extruded: true,
+        getPolygon: (p) => p.ring,
+        getElevation: (p) => (p.height || st.defaultHeight || 8) * (st.heightScale ?? 1),
+        getFillColor: (p) => hexToRgb(p.color || st.color || '#8d99ae').concat(st.opacity ?? 230),
+        pickable: spec.pickable,
+      }));
+    } else if (spec.type === 'tiles3d') {
+      // PLATEAU等の3D Tiles(tileset.json+b3dm)。deckのUMDバンドルに入っている
+      // Tile3DLayer(geo-layers)を使う。視点連動のLODストリーミングはdeck任せ。
+      if (Tile3DLayer) {
+        out.push(new Tile3DLayer({
+          id: `L|${spec.id}|tiles3d`,
+          data: spec.data.url,
+          opacity: st.opacity ?? 1,
+          pickable: spec.pickable,
+        }));
+      }
+    } else if (spec.type === 'paths') {
       out.push(new PathLayer({
         id: `L|${spec.id}|paths`,
         data: spec.data.paths,

@@ -29,8 +29,11 @@
 //   movers:    { tokens: [{id, route: [{lat, lon, t}], icon?, label?, loop?}] }
 //              t は clock.now() と同じ秒単位。loop=true でルート総時間で周回
 //   markers:   { points: [{id, lat, lon, icon?, label?, color?}] }
+//   polygons:  { polygons: [{id, ring: [[lon,lat],...], height?, name?, color?}] }
+//              押し出しポリゴン(建物等)。height はメートル。2Dはフットプリント塗り
+//   tiles3d:   { url: 'tileset.json のURL' }   (PLATEAU等の3D Tiles。deckレンダラのみ)
 
-export const LAYER_TYPES = ['network', 'paths', 'extrusion', 'movers', 'markers'];
+export const LAYER_TYPES = ['network', 'paths', 'extrusion', 'movers', 'markers', 'polygons', 'tiles3d'];
 
 /** 既定の実時計(秒)。レンダラ生成時に opts.clock で差し替え可能(fake clockで決定論テスト)。 */
 export function realClock() {
@@ -61,6 +64,13 @@ export function validateLayerSpec(spec) {
     }
   } else if (spec.type === 'markers') {
     if (!Array.isArray(d.points)) throw new Error('markers は data.points[] が必要');
+  } else if (spec.type === 'polygons') {
+    if (!Array.isArray(d.polygons)) throw new Error('polygons は data.polygons[] が必要');
+    for (const p of d.polygons) {
+      if (!Array.isArray(p.ring) || p.ring.length < 3) throw new Error(`polygons ${p.id}: ring[[lon,lat],...] (3点以上) が必要`);
+    }
+  } else if (spec.type === 'tiles3d') {
+    if (typeof d.url !== 'string' || !d.url) throw new Error('tiles3d は data.url(tileset.json) が必要');
   }
   return {
     id: spec.id,

@@ -54,4 +54,22 @@ const OPTS = { region: 'test', source: 'unit', classLabels: ['primary', 'seconda
   ok(trunc.indices.length === 1 && trunc.truncated === true, 'maxWays超過はtruncated=true(黙って切らない)');
 }
 
+// ----- v2: withValues(建物高さdm等)のroundtrip --------------------------------------
+{
+  const bways = [
+    { class: 0, name: '東京タワー', value: 3330, coords: [[139.7454, 35.6586], [139.7456, 35.6586], [139.7456, 35.6588], [139.7454, 35.6586]] },
+    { class: 0, name: null, value: 0, coords: [[139.75, 35.66], [139.751, 35.66], [139.751, 35.661]] },
+  ];
+  const buf = encodeRoads({ ...OPTS, classLabels: ['building'], ways: bways, withValues: true });
+  const h = openRoads(buf);
+  ok(h.meta.hasValues === true && h.meta.version === 2, 'v2: meta.hasValues');
+  ok(h.decodeWay(0).value === 3330 && h.decodeWay(1).value === 0, 'v2: value(高さdm)が往復する');
+  ok(h.decodeWay(0).name === '東京タワー', 'v2: name/coordsも従来通り');
+  const hit = h.queryBbox([139.74, 35.65, 139.76, 35.67]);
+  ok(hit.indices.length === 2, 'v2: bboxクエリも動く');
+  // v1(値なし)ファイルも引き続き読める
+  const v1 = openRoads(encodeRoads({ ...OPTS, ways: WAYS }));
+  ok(v1.decodeWay(0).value === 0 && v1.decodeWay(0).name === '国道11号', 'v1ファイル後方互換(value=0)');
+}
+
 console.log(`\nall ${pass} checks passed`);

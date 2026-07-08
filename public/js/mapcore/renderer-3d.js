@@ -182,7 +182,25 @@ export async function createRenderer3D(canvas, opts = {}) {
     for (const spec of registry.list()) {
       if (!spec.visible || spec.type === 'movers') continue;
       const st = spec.style;
-      if (spec.type === 'paths') {
+      if (spec.type === 'polygons') {
+        // 建物等の押し出し。ringをTHREE.Shape(XZ平面)にしてExtrudeGeometryで立てる。
+        const scaleH = st.heightScale3d ?? 0.15;   // 地形ワールドは非メートルなので縮尺
+        for (const p of spec.data.polygons) {
+          const shape = ringToShape(p.ring, THREE.Shape);
+          if (!shape) continue;
+          const h = Math.max(1, (p.height || st.defaultHeight || 8) * scaleH);
+          const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
+          geo.rotateX(Math.PI / 2);
+          geo.translate(0, h, 0);
+          const w0 = latLonToWorld(p.ring[0][1], p.ring[0][0]);
+          if (!w0) continue;
+          geo.translate(0, elevWorld(w0.x, w0.z), 0);
+          const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(p.color || st.color || '#8d99ae') });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.userData = { layerId: spec.id, feature: p };
+          customGroup.add(mesh);
+        }
+      } else if (spec.type === 'paths') {
         for (const path of spec.data.paths) {
           const verts = [];
           let prev = null;
@@ -356,7 +374,7 @@ export async function createRenderer3D(canvas, opts = {}) {
     setLayerVisible(id, v) { const r = registry.setVisible(id, v); buildCustomLayers(); rebuildMovers(); return r; },
     updateLayerData(id, data) { const r = registry.updateData(id, data); buildCustomLayers(); rebuildMovers(); return r; },
     reorderLayers(ids) { registry.reorder(ids); buildCustomLayers(); rebuildMovers(); },
-    supportsLayerType(t) { return LAYER_TYPES.includes(t); },
+    supportsLayerType(t) { return t !== 'tiles3d' && LAYER_TYPES.includes(t); },   // 3D TilesはGL専用
     getLayers() { return registry.toJSON(); },
 
     // --- カメラ演出・表示モード ---

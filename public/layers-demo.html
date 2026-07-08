@@ -367,7 +367,7 @@ $('ly-osmroads').addEventListener('change', (e) => {
 function showLoadNote(kind, r) {
   const el = $('loadnote');
   if (r.truncated) {
-    el.textContent = `${kind}: ${r.count.toLocaleString()}/${(r.total ?? 0).toLocaleString()}件(中心優先で表示・ズームインで全件)`;
+    el.textContent = `${kind}: ${r.count.toLocaleString()}件+で切り詰め(中心優先で表示・ズームインで全件)`;
     el.style.display = 'block';
   } else {
     el.textContent = `${kind}: ${r.count.toLocaleString()}件`;

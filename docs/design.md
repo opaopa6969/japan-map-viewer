@@ -108,7 +108,8 @@ bbox系は `limit` 付き(既定 roads 4000 / buildings 3000、上限20000)。
 
 - PiPは「小さなMapLibre×最大3」方式(deck MultiViewはMapboxOverlay密結合のため見送り)
 - heading-up/insetはdeckのみ。2D/3Dは `supports*()` が false を返しフォールバック
-- `paths`/`movers` の高度(z)未対応 — 地下鉄の立体表示(Tokyo Metro 3D的なやつ)を
-  やるなら coords を `[lon,lat,alt]` に拡張する(deck PathLayerは3D座標対応済み)
-- N06の供用年タイムライン再生はデータ保持のみ(UI未実装)
+- `movers` の高度(alt)はdeckで対応済み(issue #2、2D/3D対応と立体デモが残り)。
+  `paths` はdeckが3要素座標`[lon,lat,alt]`を素で受ける
+- N06の供用年タイムライン再生は/layers-demoに実装済み(issue #3)
 - OSM建物の高さ確定は約10%(残りは既定8m)。実測が欲しい都市はPLATEAUを重ねる
+- `/api/elevation`(標高)実装済み。terrain3dの座標写像ズレはissue #6参照

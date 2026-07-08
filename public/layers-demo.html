@@ -111,6 +111,8 @@
           <option value="500000">500,000 (⚠数秒固まる)</option>
           <option value="1000000">1,000,000 (⚠実験)</option>
           <option value="2000000">2,000,000 (⚠⚠関東の1/3)</option>
+          <option value="4000000">4,000,000 (⚠⚠⚠)</option>
+          <option value="6200000">6,200,000 (全関東)</option>
         </select>
       </div>
     </div>
@@ -438,7 +440,7 @@ async function loadBuildings() {
   // zoomゲートは上限連動: 大口指定ほど広い画角(低zoom)まで許す。
   // z14固定だと視界に50万棟も入らず、上限を上げても意味がなかった(実測159k)。
   const limitSel = +$('bld-limit').value;
-  const minZ = limitSel >= 2000000 ? 9 : limitSel >= 500000 ? 10.5 : limitSel >= 120000 ? 12 : 14;
+  const minZ = limitSel >= 4000000 ? 7.5 : limitSel >= 2000000 ? 9 : limitSel >= 500000 ? 10.5 : limitSel >= 120000 ? 12 : 14;
   if (map.getZoom() < minZ) {
     renderer.setLayerVisible('buildings', false);
     const el = $('loadnote');

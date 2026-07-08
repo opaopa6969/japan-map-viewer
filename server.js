@@ -293,7 +293,7 @@ async function serveBuildings(req, res, path) {
   }
   // format=bin: JRBバイナリで返す(100万棟級の本命経路。JSONは互換用に20万まで)
   const wantBin = q.get('format') === 'bin';
-  const limit = Math.min(wantBin ? 2000000 : 200000, +(q.get('limit') || 3000));
+  const limit = Math.min(wantBin ? 6200000 : 200000, +(q.get('limit') || 3000));
   // 上限超過時の切り詰めは「注視点から近い順」(codecのqueryBboxがセル走査から中心優先)。
   // ピッチをつけたカメラではgetBounds()のbbox中心が地平線方向へ大きくズレるため、
   // クライアントは center=lon,lat(map.getCenter()=実際の注視点)を渡すこと。

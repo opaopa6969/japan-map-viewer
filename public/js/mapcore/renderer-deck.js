@@ -386,12 +386,22 @@ export function createRendererDeck(container, opts = {}) {
     }
   }
 
-  const overlay = new deck.MapboxOverlay({
-    interleaved: true,
-    layers: [],
-    onHover: (info) => { if (onPick) onPick(info && info.object, info ? { x: info.x, y: info.y } : null, info); },
-    onClick: (info) => dispatchLayerPick(info),
-  });
+  // interleaved: deckレイヤーをMapLibreの描画パイプラインに差し込む(ラベルの下に
+  // 建物を潜らせる等ができる)。ただしラスタ基図だとMapLibreのラスタパスが深度を
+  // 占有し、deckの押し出し(3D建物)が地面に潰れる既知の問題がある。
+  // overlaid(interleaved:false)はdeckが自前の深度バッファで最前面に描くので、
+  // 基図がラスタでも押し出しが正しく立つ(航空写真ツアーで使用)。
+  let interleaved = true;
+  let overlay = null;
+  function makeOverlay() {
+    return new deck.MapboxOverlay({
+      interleaved,
+      layers: [],
+      onHover: (info) => { if (onPick) onPick(info && info.object, info ? { x: info.x, y: info.y } : null, info); },
+      onClick: (info) => dispatchLayerPick(info),
+    });
+  }
+  overlay = makeOverlay();
   map.addControl(overlay);
 
   // choro.index ごとに GeoJSON FeatureCollection をキャッシュ（index.features の polys から生成）。
@@ -685,6 +695,17 @@ export function createRendererDeck(container, opts = {}) {
       draw();
     },
     setBase(b) { state.base = b; applyStyle(); },
+    // deckの合成モード切替。false=overlaid(自前深度・最前面)。ラスタ基図で
+    // 3D押し出しが潰れる問題の回避に使う(ツアーの航空写真時)。再作成しdraw()で再投入。
+    setInterleaved(v) {
+      const next = !!v;
+      if (next === interleaved) return;
+      interleaved = next;
+      try { map.removeControl(overlay); } catch (_) { /* noop */ }
+      overlay = makeOverlay();
+      map.addControl(overlay);
+      draw();
+    },
     setKanji(v) { state.kanji = v; applyStyle(); },
     setLabels(v) { state.labels = !!v; applyLabelVisibility(); },   // 町名無しモード
     setAnim(v) { state.anim = v; },

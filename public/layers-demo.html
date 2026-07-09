@@ -759,6 +759,7 @@ function stopTour() {
   const m0 = renderer.getMap();
   if (window._tourPrevPR && m0.setPixelRatio) { m0.setPixelRatio(window._tourPrevPR); window._tourPrevPR = null; }
   if (window._tourPrevBase) { renderer.setBase(window._tourPrevBase); window._tourPrevBase = null; }
+  if (renderer.setInterleaved) renderer.setInterleaved(true);   // 通常はinterleavedへ戻す
   $('tour-btn').textContent = '🦅 ツアー開始(録画つき)';
   $('tour-btn').classList.remove('active');
 }
@@ -773,6 +774,9 @@ $('tour-btn').addEventListener('click', async () => {
     // 地面リッチ化: ツアー中は地理院の航空写真(ラスタ=高速・ベクタ解析なし)
     renderer.setBase('photo');
     window._tourPrevBase = 'dark';
+    // ラスタ基図だとinterleavedのdeck押し出しが地面に潰れる。overlaidにして
+    // 3D建物を自前深度で最前面に立てる(ツアー終了時にinterleavedへ戻す)
+    if (renderer.setInterleaved) renderer.setInterleaved(false);
   }
   if ($('tour-blur').checked) startTourBlur();
   if ($('tour-rec').checked) startTourRecording();   // ブラー有効時は合成キャンバスを録画

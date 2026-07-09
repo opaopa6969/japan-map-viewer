@@ -85,7 +85,8 @@
     <div class="group">
       <h2>🦅 グランドツアー</h2>
       <button class="btn" id="tour-btn">🦅 ツアー開始(録画つき)</button>
-      <label class="chk row"><input type="checkbox" id="tour-rec" checked> 🎥 webm録画(終了時DL)</label>
+      <label class="chk row"><input type="checkbox" id="tour-rec" checked> 🎥 動画録画(終了時DL・mp4優先)</label>
+      <label class="chk row"><input type="checkbox" id="tour-bld3d" checked> 🏙 3D建物を出す(都市上空で銀の街)</label>
       <label class="chk row"><input type="checkbox" id="tour-blur" checked> 🌪 残像モーションブラー</label>
       <label class="chk row"><input type="checkbox" id="tour-fast" checked> ⚡ 高速化(描画解像度↓+H264/30fps録画)</label>
       <p class="sub" id="tour-note">日本全景→隼の急降下→実道路をドリフト疾走→上昇、を13ストップ(東京4名所+全国)。
@@ -722,16 +723,22 @@ function startTourRecording() {
       dbg.recMs = performance.now() - t0r;
     }, 33);
     const stream = recCanvas.captureStream(30);
-    const mime = ['video/webm;codecs=h264', 'video/webm;codecs=vp8', 'video/webm;codecs=vp9', 'video/webm']
-      .find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+    // コンテナ選択: mp4(h264)を最優先 — VLC/QuickTime/WMP等どこでも再生できる。
+    // 無ければwebmはVP9→VP8で。**webm+h264は使わない** — Chromeは生成できるが
+    // 中身は変則で外部プレーヤーがほぼ再生できない(「webmが再生できない」の主因)。
+    const mime = [
+      'video/mp4;codecs=avc1.640028', 'video/mp4;codecs=h264', 'video/mp4',
+      'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
+    ].find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+    const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
     const chunksRec = [];
     tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: fast ? 10e6 : 16e6 });
     tourRecorder.ondataavailable = (e) => { if (e.data.size) chunksRec.push(e.data); };
     tourRecorder.onstop = () => {
-      const blob = new Blob(chunksRec, { type: 'video/webm' });
+      const blob = new Blob(chunksRec, { type: mime.split(';')[0] });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `japan-grand-tour-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.webm`;
+      a.download = `japan-grand-tour-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       tourRecorder = null;
@@ -777,8 +784,10 @@ $('tour-btn').addEventListener('click', async () => {
       const label = { dive: '🦅 急降下', cruise: '🏎 疾走中', climb: '🚀 上昇' }[phase] || phase;
       el.textContent = city ? `ツアー: ${label} — ${city.name}` : `ツアー: ${label}`;
       el.style.display = 'block';
+      // 3D建物チェックOFFなら航空写真だけの純粋なフライオーバー(建物フェッチもしない)
+      if (!$('tour-bld3d').checked) return;
       // 画面外の建物も毎フレーム頂点演算される(deckはカリングしない)ため、
-      // 疾走中はメガ建物レイヤーを外し、都市周辺(半径2.5km)だけの軽量版に差し替える。
+      // 疾走中はメガ建物レイヤーを外し、都市周辺(半径4.5km)だけの軽量版に差し替える。
       if (phase === 'dive' && city) {
         tourBldPromise = fetch(`/api/buildings?center=${city.lon},${city.lat}&radius=4500&limit=150000&format=bin`)
           .then((r) => (r.ok ? r.arrayBuffer() : null))

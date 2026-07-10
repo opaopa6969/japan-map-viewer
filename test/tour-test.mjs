@@ -136,4 +136,92 @@ const ROUTE = [[139.76, 35.68], [139.77, 35.68], [139.78, 35.69]];
   ok(zooms.some((z) => z < 10 && z > 8.5), '都市間は飛行機高度(z9前後)で移動');
 }
 
+// ----- 区間距離に比例した上昇高度 / 低空トランジット / spec.start ---------------------
+// zoomは小さいほど高い。近い都市へは低く、遠い都市へは高く上がること。
+function arcSpec(cities, transit) {
+  return {
+    start: { lat: 36.05, lon: 139.6, zoom: 9.8, pitch: 50, bearing: 170 },
+    overview: { zoom: 9.8, pitch: 50 },
+    cruise: { mode: 'arc', zoom: 16.0, pitch: 73, speed: 170, turnRate: 16, bearingLag: 2.5 },
+    dive: { gravity: 6.5, maxVz: 7.5, flare: 15, nearKm: 15, transitK: 3.0 },
+    climb: { boost: 6.5, maxVz: 7.5 },
+    transit: { shortKm: 50, longKm: 420, zoomNear: 13.2, zoomFar: 11.2, lowZoom: 15.9, lowK: 0.55, lowNearKm: 5, ...transit },
+    cities,
+  };
+}
+
+/** jumpTo を実際に保持する fake(上のfakeRendererはgetZoom等が固定値でspec.startを消す)。 */
+function statefulRenderer(start) {
+  const calls = [];
+  const cam = { lng: start.lon, lat: start.lat, zoom: start.zoom, bearing: start.bearing ?? 0, pitch: start.pitch ?? 45 };
+  return {
+    calls, cam,
+    getMap: () => ({
+      jumpTo: (o) => {
+        calls.push(o);
+        cam.lng = o.center[0]; cam.lat = o.center[1];
+        cam.zoom = o.zoom; cam.bearing = o.bearing; cam.pitch = o.pitch;
+      },
+      getCenter: () => ({ lng: cam.lng, lat: cam.lat }),
+      getZoom: () => cam.zoom,
+      getBearing: () => cam.bearing,
+      getPitch: () => cam.pitch,
+      setMaxPitch: () => {},
+    }),
+  };
+}
+
+/** ツアーを完走させ、climbに入るたびに「その区間の到達zoom」を拾う。 */
+function flyThrough(spec) {
+  const r = statefulRenderer(spec.start);
+  const tour = createTourPlayer(r, spec, { onDone: () => {} });
+  tour.start();
+  let guard = 60000;
+  const topPerLeg = [];
+  let prev = tour.state.phase;
+  while (tour.state.phase !== 'done' && guard-- > 0) {
+    tour.step(1 / 60);
+    if (tour.state.phase === 'climb' && prev !== 'climb') topPerLeg.push(tour.state.topZoom);
+    prev = tour.state.phase;
+  }
+  return { calls: r.calls, topPerLeg, finished: guard > 0 };
+}
+
+{
+  // 東京→(371km)→京都→(42km)→大阪。遠い区間ほど高く上がるはず
+  const far = { name: '京都', lat: 35.0116, lon: 135.7681, cruiseSec: 2.1 };
+  const near = { name: '大阪', lat: 34.7025, lon: 135.4959, cruiseSec: 2.1 };
+  const tokyo = { name: '大手町', lat: 35.6866, lon: 139.7639, cruiseSec: 2.1 };
+  const { topPerLeg, finished } = flyThrough(arcSpec([tokyo, far, near]));
+  ok(finished, '大手町→京都→大阪を完走');
+  ok(topPerLeg[0] < topPerLeg[1], `遠い区間ほど高く上がる (371km:z${topPerLeg[0].toFixed(1)} < 42km:z${topPerLeg[1].toFixed(1)})`);
+  ok(topPerLeg[0] > 11.1 && topPerLeg[0] < 13.3, `到達高度が transit の zoomFar..zoomNear に収まる (z${topPerLeg[0].toFixed(2)})`);
+}
+
+{
+  // lowTransit の行き先へは上がらない — cruise(z16)付近の低空を保つ
+  const tokyo = { name: '大手町', lat: 35.6866, lon: 139.7639, cruiseSec: 2.1 };
+  const kyoto = { name: '京都', lat: 35.0116, lon: 135.7681, cruiseSec: 2.1 };
+  const osakaLow = { name: '大阪', lat: 34.7025, lon: 135.4959, cruiseSec: 2.1, lowTransit: true };
+  const { topPerLeg } = flyThrough(arcSpec([tokyo, kyoto, osakaLow]));
+  ok(topPerLeg[1] >= 15.85, `lowTransitの区間は上がらない (z${topPerLeg[1].toFixed(2)} ≈ lowZoom 15.9)`);
+
+  // lowTransit を外すと、同じ42kmでも zoomNear まで上がる
+  const osakaHigh = { ...osakaLow, lowTransit: false };
+  const hi = flyThrough(arcSpec([tokyo, kyoto, osakaHigh]));
+  ok(hi.topPerLeg[1] < 13.5 && hi.topPerLeg[1] > 12.5, `lowTransitを外せば通常の上昇になる (z${hi.topPerLeg[1].toFixed(2)})`);
+  ok(topPerLeg[1] > hi.topPerLeg[1], 'lowTransitの方が低い高度で移動する');
+}
+
+{
+  // spec.start があればそこから始まる
+  const spec = arcSpec([{ name: '大手町', lat: 35.6866, lon: 139.7639, cruiseSec: 2.1 }]);
+  const r = statefulRenderer({ lat: 0, lon: 0, zoom: 4, pitch: 0, bearing: 0 });   // 全然違う場所から
+  const tour = createTourPlayer(r, spec, {});
+  tour.start();
+  ok(Math.abs(tour.cam.lat - 36.05) < 1e-9 && Math.abs(tour.cam.lon - 139.6) < 1e-9,
+    'spec.start の関東平野上空から始まる(地図の現在位置を無視する)');
+  ok(Math.abs(tour.cam.zoom - 9.8) < 1e-9, 'spec.start の zoom から始まる');
+}
+
 console.log(`\nall ${pass} checks passed`);

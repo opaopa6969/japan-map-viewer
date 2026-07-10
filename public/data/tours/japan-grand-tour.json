@@ -1,103 +1,65 @@
 {
   "name": "japan-grand-tour",
-  "description": "航空写真の上を、隼の急降下→上空100m級を旋回フライバイ5秒→飛行機高度でビューンと次へ。東京4名所は北行き・南行きの合間に分散。",
-  "overview": {
-    "zoom": 8.7,
-    "pitch": 48
-  },
-  "cruise": {
-    "mode": "arc",
-    "zoom": 16.0,
-    "pitch": 73,
-    "speed": 170,
-    "turnRate": 16,
-    "bearingLag": 2.5
-  },
-  "dive": {
-    "gravity": 3.4,
-    "maxVz": 4.2,
-    "flare": 9,
-    "steer": 2.6,
-    "nearKm": 12,
-    "transitK": 0.35,
-    "transitZoom": 9.3
-  },
-  "climb": {
-    "boost": 2.8,
-    "maxVz": 3.4
-  },
+  "mode": "cuts",
+  "description": "東京→福岡の5都市。都市間は飛ばずカットで切り替わる。低空は300m前後(街が見分けられる高さ)を保ち、カーブは半径700m級の大きな弧を描く。約33秒。ブラーは急降下とブーストだけ。",
+  "limits": { "minAlt": 25, "maxAlt": 8000, "minPitch": 20, "maxPitch": 85 },
   "cities": [
     {
-      "name": "東京・丸の内",
-      "lat": 35.6812,
-      "lon": 139.7671,
-      "cruiseSec": 6
-    },
-    {
-      "name": "仙台",
-      "lat": 38.2682,
-      "lon": 140.8694,
-      "cruiseSec": 5
-    },
-    {
-      "name": "札幌・すすきの",
-      "lat": 43.0555,
-      "lon": 141.3524,
-      "cruiseSec": 6
-    },
-    {
-      "name": "東京・秋葉原",
-      "lat": 35.6984,
-      "lon": 139.7731,
-      "cruiseSec": 5
-    },
-    {
-      "name": "金沢",
-      "lat": 36.5613,
-      "lon": 136.6562,
-      "cruiseSec": 5
+      "name": "東京・大手町",
+      "lat": 35.6866,
+      "lon": 139.7639,
+      "enter": { "alt": 2600, "bearing": 200, "pitch": 42, "speed": 60 },
+      "moves": [
+        { "sec": 2.5, "alt": 320, "pitch": 78, "speed": 110, "smear": 0.8 },
+        { "sec": 1.0, "speed": 130 },
+        { "sec": 3.3, "turn": -34, "drift": 0.3, "speed": 130 }
+      ]
     },
     {
       "name": "京都",
       "lat": 35.0116,
       "lon": 135.7681,
-      "cruiseSec": 6
+      "enter": { "alt": 300, "bearing": 90, "pitch": 77, "speed": 105 },
+      "moves": [
+        { "sec": 1.2, "speed": 125 },
+        { "sec": 2.8, "turn": 30, "drift": 0.25, "speed": 125 },
+        { "sec": 2.8, "turn": -34, "drift": 0.25, "speed": 125 }
+      ]
     },
     {
       "name": "大阪・梅田",
       "lat": 34.7025,
       "lon": 135.4959,
-      "cruiseSec": 6
-    },
-    {
-      "name": "神戸",
-      "lat": 34.6913,
-      "lon": 135.183,
-      "cruiseSec": 5
+      "enter": { "alt": 320, "bearing": 20, "pitch": 78, "speed": 140 },
+      "moves": [
+        { "sec": 1.0, "speed": 150 },
+        { "sec": 1.2, "speed": 25 },
+        { "sec": 0.8, "speed": 30 },
+        { "sec": 1.6, "speed": 145, "smear": 0.8 },
+        { "sec": 2.2, "turn": 45, "drift": 0.5, "speed": 115, "smear": 0.5 }
+      ]
     },
     {
       "name": "広島",
       "lat": 34.3853,
       "lon": 132.4553,
-      "cruiseSec": 5
+      "enter": { "alt": 300, "bearing": 250, "pitch": 78, "speed": 95 },
+      "moves": [
+        { "sec": 1.6, "speed": 120 },
+        { "sec": 2.6, "alt": 1500, "pitch": 52, "speed": 125 },
+        { "sec": 1.9, "turn": -32, "drift": 0.25, "alt": 1900, "pitch": 46 }
+      ]
     },
     {
       "name": "福岡・天神",
       "lat": 33.5902,
       "lon": 130.4017,
-      "cruiseSec": 6
-    },
-    {
-      "name": "東京・渋谷",
-      "lat": 35.658,
-      "lon": 139.7016,
-      "cruiseSec": 5
-    },
-    {
-      "name": "東京・新宿",
-      "lat": 35.6896,
-      "lon": 139.7006,
-      "cruiseSec": 6
+      "enter": { "alt": 2400, "bearing": 160, "pitch": 42, "speed": 70 },
+      "moves": [
+        { "sec": 2.4, "alt": 300, "pitch": 79, "speed": 120, "smear": 0.8 },
+        { "sec": 3.2, "turn": 34, "drift": 0.3, "speed": 130 },
+        { "sec": 1.3, "speed": 145 }
+      ]
     }
   ]
 }

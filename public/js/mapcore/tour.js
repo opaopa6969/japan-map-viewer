@@ -76,13 +76,36 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
   const cz = { zoom: 15.8, pitch: 66, speed: 60, lookAhead: 80, bearingLag: 2.2, curveSlow: 1.2, hopZoom: 0.9, hopSec: 5, lookDeg: 55, ...(spec.cruise || {}) };
   const dv = { gravity: 3.2, maxVz: 3.6, flare: 8, steer: 2.4, ...(spec.dive || {}) };
   const cl = { boost: 2.4, maxVz: 3.0, ...(spec.climb || {}) };
+  // 区間の移動距離で上昇の到達高度を決める(短い区間で成層圏まで上がらない)。
+  // 行き先に lowTransit:true があれば上がらず lowZoom(≒1000m)を高速で突っ切る。
+  // lowNearKm: 低空トランジットは元々地面が近いので、街の直前まで引きつけてから降下に移る
+  // (通常の nearKm=15km で切り上げると、40km級の区間が1秒たらずで終わってしまう)
+  const tr = { shortKm: 50, longKm: 400, zoomNear: 12.2, zoomFar: 8.2, lowZoom: 15.0, lowK: 0.9, lowNearKm: 6, ...(spec.transit || {}) };
   const cities = spec.cities || [];
+
+  /** 2都市間の距離(km)。 */
+  function legKm(a, b) {
+    const kLon = 111320 * Math.cos(((a.lat + b.lat) / 2) * DEG);
+    return Math.hypot((b.lon - a.lon) * kLon, (b.lat - a.lat) * 111320) / 1000;
+  }
+
+  /** 都市 i から i+1 へ向かう区間の巡航(トランジット)ズーム。小さいほど高い。 */
+  function legTopZoom(i) {
+    const a = cities[i];
+    const b = cities[i + 1];
+    if (!a || !b) return ov.zoom;
+    if (b.lowTransit) return tr.lowZoom;              // 上がらず低空で突っ切る
+    const d = legKm(a, b);
+    const u = Math.max(0, Math.min(1, (d - tr.shortKm) / (tr.longKm - tr.shortKm)));
+    return tr.zoomNear + (tr.zoomFar - tr.zoomNear) * u;   // 遠いほど高く(zoomは小さく)
+  }
 
   // カメラ物理状態(lon/lat/zoom/bearing/pitch + 速度)
   const cam = { lon: 137, lat: 37, zoom: ov.zoom, bearing: 0, pitch: ov.pitch, vLon: 0, vLat: 0, vZoom: 0 };
   const st = {
     phase: 'idle', cityIdx: 0, t: 0,           // t=フェーズ内経過秒
     route: null, s: 0, speed: 0,               // cruise用(ルート/走行距離m/現在速度)
+    topZoom: ov.zoom,                          // いまの区間のトランジット高度(zoom)
     routePromise: null, rafId: null, running: false,
   };
 
@@ -121,13 +144,15 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
     if (st.phase === 'dive') {
       const kLonM = 111320 * Math.cos(cam.lat * DEG);
       const distM = Math.hypot((city.lon - cam.lon) * kLonM, (city.lat - cam.lat) * 111320);
-      const nearM = (dv.nearKm ?? 12) * 1000;
+      const nearM = (city.lowTransit ? tr.lowNearKm : (dv.nearKm ?? 12)) * 1000;
       if (distM > nearM) {
-        // --- 高高度トランジット: 降下は保留し、飛行機高度で次都市へビューンと滑空 ---
-        const zT = dv.transitZoom ?? (ov.zoom + 0.8);
+        // --- トランジット: 降下は保留し、その区間の高度(topZoom)で次都市へ滑空 ---
+        const zT = st.topZoom;
         cam.zoom += (zT - cam.zoom) * Math.min(1, 0.9 * dt);
         cam.vZoom = 0;
-        const rate = Math.min(1, (dv.transitK ?? 0.35) * dt);   // 指数接近(遠いほど速く見える)
+        // 低空トランジットは速く突っ切る(上がらないぶん、地面が近くて速く感じる)
+        const k = city.lowTransit ? tr.lowK : (dv.transitK ?? 0.35);
+        const rate = Math.min(1, k * dt);   // 指数接近(遠いほど速く見える)
         cam.lon += (city.lon - cam.lon) * rate;
         cam.lat += (city.lat - cam.lat) * rate;
       } else {
@@ -144,7 +169,8 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
       // 機首: 進行方向へ、pitchは降下量に応じて起きる
       const hdg = headingDeg(cam.lat, cam.lon, city.lat, city.lon);
       cam.bearing += angleDelta(cam.bearing, hdg) * Math.min(1, 1.5 * dt);
-      const prog = 1 - Math.max(0, cz.zoom - cam.zoom) / (cz.zoom - ov.zoom);
+      const span = Math.max(0.3, cz.zoom - st.topZoom);
+      const prog = 1 - Math.max(0, cz.zoom - cam.zoom) / span;
       cam.pitch = ov.pitch + (cz.pitch - ov.pitch) * Math.min(1, prog * 1.15);
       if (cam.zoom >= cz.zoom - 0.02 && (cz.mode === 'arc' || st.route)) {
         if (cz.mode === 'arc') {
@@ -184,6 +210,7 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
       cam.pitch = cz.pitch;
       if (st.t >= (city.cruiseSec ?? 5)) {
         cam.vZoom = 0;
+        st.topZoom = legTopZoom(st.cityIdx);   // 次区間の距離で到達高度を決める
         setPhase('climb');
       }
     } else if (st.phase === 'cruise') {
@@ -222,12 +249,14 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
         : st.t >= (city.cruiseSec ?? 30);
       if (done && !st.hop) {
         cam.vZoom = 0;
+        st.topZoom = legTopZoom(st.cityIdx);   // 次区間の距離で到達高度を決める
         setPhase('climb');
       }
       map.jumpTo({ center: [cam.lon, cam.lat], zoom: cam.zoom, bearing: bearingOut, pitch: cam.pitch });
       return;   // 首振りbearingで描画済み
     } else if (st.phase === 'climb') {
-      // --- ブースト上昇+次都市へバンク旋回 ---
+      // --- ブースト上昇+次都市へバンク旋回。到達高度は区間距離で決まる(st.topZoom) ---
+      const top = st.topZoom;
       cam.vZoom = Math.min(cam.vZoom + cl.boost * dt, cl.maxVz);
       cam.zoom -= cam.vZoom * dt;
       const next = cities[st.cityIdx + 1];
@@ -240,10 +269,10 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
         cam.lon += cam.vLon * dt;
         cam.lat += cam.vLat * dt;
       }
-      const prog = (cz.zoom - cam.zoom) / (cz.zoom - ov.zoom);
+      const prog = (cz.zoom - cam.zoom) / Math.max(0.3, cz.zoom - top);
       cam.pitch = cz.pitch + (ov.pitch - cz.pitch) * Math.min(1, prog);
-      if (cam.zoom <= ov.zoom) {
-        cam.zoom = ov.zoom;
+      if (cam.zoom <= top) {
+        cam.zoom = top;
         st.cityIdx++;
         if (st.cityIdx >= cities.length) return finish();
         cam.vZoom = 0;
@@ -265,8 +294,18 @@ export function createTourPlayer(renderer, spec, { getRoute, onPhase, onDone } =
     st.running = true;
     try { if (map.setMaxPitch && cz.pitch > 60) map.setMaxPitch(Math.min(85, cz.pitch + 8)); } catch (e) { /* noop */ }
     st.cityIdx = 0;
+    // spec.start があればそこへワープしてから始める(既定は今の地図の視点から)
+    if (spec.start) {
+      map.jumpTo({
+        center: [spec.start.lon, spec.start.lat],
+        zoom: spec.start.zoom ?? ov.zoom,
+        pitch: spec.start.pitch ?? ov.pitch,
+        bearing: spec.start.bearing ?? 0,
+      });
+    }
     const c0 = map.getCenter();
     Object.assign(cam, { lon: c0.lng, lat: c0.lat, zoom: map.getZoom(), bearing: map.getBearing(), pitch: map.getPitch(), vLon: 0, vLat: 0, vZoom: 0 });
+    st.topZoom = cam.zoom;   // 最初のdiveは開始高度からのトランジット
     beginDive();
     let last = performance.now();
     const loop = (now) => {

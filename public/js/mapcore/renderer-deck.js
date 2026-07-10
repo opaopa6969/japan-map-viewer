@@ -102,13 +102,24 @@ function angleDelta(from, to) {
 // registry の spec(network/extrusion/movers/markers)を deck レイヤーへ写像する。
 // deck レイヤーid は `L|<specId>|<part>` — onClick で spec を引くのに使う。
 // insets からも呼ぶため純関数(deckNS と時刻を引数で受ける)。
-function buildCustomDeckLayers(deckNS, registry, tNow, cullBounds) {
+//
+// liveIds: 「この overlay で一度でも表示したspec id」の集合(省略時は従来どおり全部渡す)。
+// 不変条件は「deckに隠れたレイヤーを初期化させない」。
+//   - 生きたoverlay上: 既に初期化済みなので visible:false で保持(下のコメント参照)
+//   - 作り直したoverlay: 未初期化なので渡してはいけない。渡すと隠れたままの全国29Mが
+//     ゼロから再テッセレーションされ、旧overlay解放前との二重確保(実測2.8GB)で
+//     Array buffer allocation failed になる(setInterleaved が overlay を作り直す)
+export function buildCustomDeckLayers(deckNS, registry, tNow, cullBounds, liveIds) {
   const { LineLayer, ScatterplotLayer, ColumnLayer, TextLayer, PathLayer, SolidPolygonLayer, Tile3DLayer } = deckNS;
   const out = [];
   for (const spec of registry.list()) {
     // 非表示はdeckのvisibleプロパティで隠す。リストから外すとdeckがリソースを破棄し、
     // 再表示のたびに全再テッセレーション+巨大バッファ再確保が走る(全国29Mで
     // Array buffer allocation failed実測)。visible:falseなら保持したまま描画スキップ。
+    if (liveIds) {
+      if (!spec.visible && !liveIds.has(spec.id)) continue;   // 未初期化の非表示は渡さない
+      if (spec.visible) liveIds.add(spec.id);
+    }
     const st = spec.style;
     if (spec.type === 'polygons') {
       if (spec.data.binary) {
@@ -165,15 +176,18 @@ function buildCustomDeckLayers(deckNS, registry, tNow, cullBounds) {
           }
         }
         for (const chunk of b._chunks) {
-          // 空間チャンク(bbox付き)は視界外をvisible:falseに。deckはリソースを保持した
-          // まま描画だけ飛ばすので、頂点シェーダのコストが視界内チャンク分だけになる
-          // (全国29M=1.88億頂点を常時流すと1フレーム140ms実測 → 街なら1〜2チャンクに落ちる)
+          // 空間チャンク(bbox付き)は視界外をレイヤーごと外す。visible:falseで残すと
+          // deckが確保を保持し続け、全国29M(=1.88億頂点、positionsだけでFloat64換算3GB)を
+          // 積んだまま新しいチャンクが視界に入った瞬間に Array buffer allocation failed で
+          // 落ちる(札幌へ飛ぶと実測)。外せばdeckがfinalizeして解放し、視界内ぶんだけが
+          // 常時確保される。再入時のテッセレーションは1チャンク(最大600万頂点)で済む。
           const inView = !cullBounds || !chunk.bbox
             || (chunk.bbox[0] <= cullBounds[2] && chunk.bbox[2] >= cullBounds[0]
               && chunk.bbox[1] <= cullBounds[3] && chunk.bbox[3] >= cullBounds[1]);
+          if (chunk.bbox && cullBounds && !inView) continue;
           out.push(new SolidPolygonLayer({
             id: `L|${spec.id}|polygons|${chunk.base}`,
-            visible: spec.visible && inView,
+            visible: spec.visible,
             data: chunk.data,
             _normalize: false,
             // 重要: 既定はXYZ(頂点=3要素)。XY詰めなので明示しないと頂点が3個ずつ
@@ -393,7 +407,12 @@ export function createRendererDeck(container, opts = {}) {
   // 基図がラスタでも押し出しが正しく立つ(航空写真ツアーで使用)。
   let interleaved = true;
   let overlay = null;
+  // この overlay で一度でも表示したspec id。overlayを作り直したら空に戻す
+  // (新品のoverlayには隠れたレイヤーを渡さない → 巨大レイヤーの二重確保を避ける)。
+  let liveIds = new Set();
+
   function makeOverlay() {
+    liveIds = new Set();
     return new deck.MapboxOverlay({
       interleaved,
       layers: [],
@@ -500,7 +519,7 @@ export function createRendererDeck(container, opts = {}) {
 
   function buildLayers() {
     // 下から: コロプレス → 点群/集約 → カスタムレイヤー(zIndex順)
-    return [...choroLayers(), ...modeLayers(), ...buildCustomDeckLayers(deck, registry, clock.now(), cullBoundsOf(map))];
+    return [...choroLayers(), ...modeLayers(), ...buildCustomDeckLayers(deck, registry, clock.now(), cullBoundsOf(map), liveIds)];
   }
   function draw() {
     overlay.setProps({ layers: buildLayers() });

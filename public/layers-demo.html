@@ -37,6 +37,29 @@
   #popup .close { position: absolute; top: 4px; right: 8px; cursor: pointer; color: var(--muted); }
   a.back { color: var(--muted); font-size: 12px; text-decoration: none; }
   a.back:hover { color: var(--text); }
+
+  /* ✈ フライトHUD: 飛行中だけ出る。pointer-events:noneで地図操作を邪魔しない */
+  #hud { position: absolute; inset: 0; z-index: 26; display: none; pointer-events: none;
+    font-family: ui-monospace, monospace; color: #7dffa8; text-shadow: 0 0 6px rgba(0,0,0,.9); }
+  #hud.on { display: block; }
+  #hud .box { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: rgba(8,14,10,.62); border: 1px solid rgba(125,255,168,.35); border-radius: 10px;
+    padding: 8px 14px; display: flex; gap: 18px; align-items: center; font-size: 12px; white-space: nowrap; }
+  #hud .v { font-size: 17px; font-weight: 600; letter-spacing: .02em; }
+  #hud .lbl { color: rgba(125,255,168,.6); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+  #hud .cell { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
+  #hud .bar { width: 84px; height: 7px; border: 1px solid rgba(125,255,168,.45); border-radius: 4px; overflow: hidden; }
+  #hud .bar > i { display: block; height: 100%; background: #7dffa8; width: 0; }
+  #hud .warn { color: #ffd166; }
+  #hud .crit { color: #ff6b6b; }
+  /* 照準(ベロシティベクタ): 画面中心=注視点=進行方向 */
+  #hud .recticle { position: absolute; top: 50%; left: 50%; width: 42px; height: 42px; margin: -21px 0 0 -21px;
+    border: 1px solid rgba(125,255,168,.5); border-radius: 50%; }
+  #hud .recticle::before, #hud .recticle::after { content: ''; position: absolute; background: rgba(125,255,168,.5); }
+  #hud .recticle::before { left: -14px; top: 50%; width: 12px; height: 1px; }
+  #hud .recticle::after { right: -14px; top: 50%; width: 12px; height: 1px; }
+  #hud .pad { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); font-size: 11px;
+    background: rgba(8,14,10,.62); border: 1px solid rgba(125,255,168,.3); border-radius: 8px; padding: 4px 10px; }
 </style>
 </head>
 <body>
@@ -84,13 +107,26 @@
 
     <div class="group">
       <h2>🦅 グランドツアー</h2>
-      <button class="btn" id="tour-btn">🦅 ツアー開始(録画つき)</button>
+      <button class="btn" id="tour-btn">🦅 東京→福岡 5都市 (約32秒・録画つき)</button>
+      <button class="btn" id="tour2-btn">🗾 札幌→鹿児島 8都市 (約45秒・録画つき)</button>
       <label class="chk row"><input type="checkbox" id="tour-rec" checked> 🎥 動画録画(終了時DL・mp4優先)</label>
-      <label class="chk row"><input type="checkbox" id="tour-bld3d" checked> 🏙 3D建物を出す(都市上空で銀の街)</label>
       <label class="chk row"><input type="checkbox" id="tour-blur" checked> 🌪 残像モーションブラー</label>
       <label class="chk row"><input type="checkbox" id="tour-fast" checked> ⚡ 高速化(描画解像度↓+H264/30fps録画)</label>
-      <p class="sub" id="tour-note">日本全景→隼の急降下→実道路をドリフト疾走→上昇、を13ストップ(東京4名所+全国)。
-        建物は事前に「全国+📌固定」推奨</p>
+      <p class="sub" id="tour-note">都市間は飛ばず<b>カットで切り替わり</b>ます。街ごとに違う振り付け —
+        急降下→ドリフト、低空スラローム、急ブレーキ→ブースト、上昇のみ、大きく回り込む。
+        ブラーは速い場面だけ乗ります。<br>
+        <b>カメラを動かして録画するだけ</b>で、レイヤーにも基図にも触りません。いま画面に
+        見えているものがそのまま映ります(3D建物を出したいなら上の「🏢 実建物」をON)</p>
+    </div>
+
+    <div class="group">
+      <h2>✈ フライトモード (自由飛行)</h2>
+      <button class="btn" id="fly-btn">✈ 離陸 — 東京上空・時速100km</button>
+      <label class="chk row"><input type="checkbox" id="fly-here"> 📍 東京ではなく今見ている場所から飛ぶ</label>
+      <p class="sub" id="fly-note">東京駅の上空600mから、北向き・時速100kmでゆっくり始まります。
+        W を押し続けるとどんどん速くなり、最後はマッハ10(高度で音速が変わるので実速度も変わる)。<br>
+        ⌨ <b>W/S=速く/遅く</b>・<b>↑↓=機首上げ下げ</b>・<b>←→=左右に曲がる</b>・Q/E=ラダー・Space=加速・X=水平に戻す・<b>Esc=終了</b><br>
+        🎮 左スティック=機首と旋回・右スティック左右=ラダー・RT/LT=速く/遅く・A=加速・B=水平</p>
     </div>
 
     <div class="group">
@@ -145,6 +181,20 @@
       border:1px solid var(--border); border-radius:8px; padding:6px 10px; font-size:11px; color:var(--muted);
       font-family:ui-monospace,monospace; line-height:1.6; display:none; white-space:pre;"></div>
     <div id="popup"><span class="close" onclick="this.parentElement.style.display='none'">✕</span><div id="popup-body"></div></div>
+    <div id="hud">
+      <div class="recticle"></div>
+      <div class="pad" id="hud-pad">🎮 ゲームパッド未接続 — キーボードで操縦できます</div>
+      <div class="box">
+        <div class="cell"><span class="lbl">Mach</span><span class="v" id="hud-mach">0.00</span></div>
+        <div class="cell"><span class="lbl">速度</span><span class="v" id="hud-kmh">0</span></div>
+        <div class="cell"><span class="lbl">高度</span><span class="v" id="hud-alt">0</span></div>
+        <div class="cell"><span class="lbl">昇降</span><span class="v" id="hud-vs">0</span></div>
+        <div class="cell"><span class="lbl">方位</span><span class="v" id="hud-hdg">000</span></div>
+        <div class="cell"><span class="lbl">バンク</span><span class="v" id="hud-bank">0°</span></div>
+        <div class="cell"><span class="lbl">G</span><span class="v" id="hud-g">1.0</span></div>
+        <div class="cell"><span class="lbl">スロットル</span><span class="bar"><i id="hud-thr"></i></span></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -152,6 +202,9 @@
 import { createRendererDeck } from '/js/mapcore/renderer-deck.js';
 import { jrbToBuildingChunks } from '/js/mapcore/jrb.js';
 import { createTourPlayer } from '/js/mapcore/tour.js';
+import { createCutTour, tourSeconds } from '/js/mapcore/tour-cuts.js';
+import { createFlightSim } from '/js/mapcore/flight.js';
+import { createFlightInput } from '/js/mapcore/flight-input.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -687,10 +740,10 @@ function startTourBlur() {
       blurCanvas.width = w;
       blurCanvas.height = h;
     }
-    // フェーズで残像の濃さを変える(疾走/急降下ほど流れる)
-    const phase = tour ? tour.state.phase : null;
-    const a = phase === 'cruise' ? 0.42 : (phase === 'dive' || phase === 'climb') ? 0.5 : 0.9;
-    ctx.globalAlpha = a;
+    // 残像の濃さはツアーの振り付けが決める(state.smear 0..1)。0=ブラー無し。
+    // alpha=1で前フレームを完全に上書き、下げるほど尾を引く。
+    const smear = tour && tour.state.smear ? tour.state.smear : 0;
+    ctx.globalAlpha = 1 - 0.62 * smear;
     const t0c = performance.now();
     ctx.drawImage(src, 0, 0, blurCanvas.width, blurCanvas.height);
     dbg.blurMs = performance.now() - t0c;   // WebGL→2Dコピーの同期コスト(犯人特定用)
@@ -732,95 +785,161 @@ function startTourRecording() {
     ].find((m) => MediaRecorder.isTypeSupported(m)) || 'video/webm';
     const ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
     const chunksRec = [];
+    console.log('録画コンテナ:', mime);
     tourRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: fast ? 10e6 : 16e6 });
     tourRecorder.ondataavailable = (e) => { if (e.data.size) chunksRec.push(e.data); };
     tourRecorder.onstop = () => {
       const blob = new Blob(chunksRec, { type: mime.split(';')[0] });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `japan-grand-tour-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`;
+      a.download = `${window._tourName || 'japan-tour'}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${ext}`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       tourRecorder = null;
     };
-    tourRecorder.start(1000);
+    // timeslice を渡さない: Chromeのmp4マルチプレクサはタイムスライスすると
+    // 断片化MP4(moovが末尾/不完全)を吐き、外部プレーヤーで再生できないことがある。
+    // 引数なしなら stop() 時に完結した1本のBlobが来る(30〜45秒なら量も問題ない)。
+    tourRecorder.start();
   } catch (e) {
     showPopup(`<b>録画開始に失敗</b><br><span class="k">${e.message}(ツアーは続行)</span>`, { x: 40, y: 40 });
   }
 }
+// ツアーの定義。ボタンidごとに tour file と既定のラベルを持つ。
+const TOURS = {
+  'tour-btn': { file: '/data/tours/japan-grand-tour.json', label: '🦅 東京→福岡 5都市 (約32秒・録画つき)' },
+  'tour2-btn': { file: '/data/tours/japan-north-south.json', label: '🗾 札幌→鹿児島 8都市 (約45秒・録画つき)' },
+};
+let tourBtnId = null;   // いま走っているツアーのボタンid
+
 function stopTour() {
   if (tour) { tour.stop(); tour = null; }
-  renderer.removeLayer('tour-bld');
-  renderer.setLayerVisible('buildings', $('ly-buildings').checked);
   if (tourRecorder && tourRecorder.state !== 'inactive') tourRecorder.stop();
   if (recTimer) { clearInterval(recTimer); recTimer = null; }
   recCanvas = null;
   stopTourBlur();
   const m0 = renderer.getMap();
   if (window._tourPrevPR && m0.setPixelRatio) { m0.setPixelRatio(window._tourPrevPR); window._tourPrevPR = null; }
-  if (window._tourPrevBase) { renderer.setBase(window._tourPrevBase); window._tourPrevBase = null; }
-  if (renderer.setInterleaved) renderer.setInterleaved(true);   // 通常はinterleavedへ戻す
-  $('tour-btn').textContent = '🦅 ツアー開始(録画つき)';
-  $('tour-btn').classList.remove('active');
+  if (tourBtnId) {
+    $(tourBtnId).textContent = TOURS[tourBtnId].label;
+    $(tourBtnId).classList.remove('active');
+    tourBtnId = null;
+  }
 }
-$('tour-btn').addEventListener('click', async () => {
-  if (tour) { stopTour(); return; }
-  const spec = await (await fetch('/data/tours/japan-grand-tour.json')).json();
-  $('bld-pin').checked = true;   // ツアー中のmoveend再取得を止める(カクつき防止)
-  renderer.setLayerVisible('buildings', false);   // メガ建物はツアー全編OFF(頂点負荷ゼロ化)
+// ツアーはキーボード操作の代わりにカメラを滑らかに動かして録画するだけ。
+// レイヤーにも基図にも触らない — 画面に見えているものが、そのまま録画される。
+// (かつては建物を隠して都市ごとに差し替え、航空写真+overlaidへ切り替えていたが、
+//  overlayの作り直しで29Mレイヤーが二重確保になり Array buffer allocation failed で
+//  落ちていた。手で動かす時と同じ描画経路を通すのが正しい)
+async function startTour(btnId) {
+  if (tour) { const was = tourBtnId; stopTour(); if (was === btnId) return; }
+  if (flight) stopFlight();     // ツアーと自由飛行は排他(両方がjumpToして喧嘩する)
+  const spec = await (await fetch(TOURS[btnId].file)).json();
+  tourBtnId = btnId;
+  window._tourName = spec.name || 'tour';
   if ($('tour-fast').checked) {
-    const m = renderer.getMap();
+    const m = renderer.getMap();   // 録画を軽くするための描画解像度↓のみ
     if (m.setPixelRatio) { window._tourPrevPR = window.devicePixelRatio; m.setPixelRatio(1); }
-    // 地面リッチ化: ツアー中は地理院の航空写真(ラスタ=高速・ベクタ解析なし)
-    renderer.setBase('photo');
-    window._tourPrevBase = 'dark';
-    // ラスタ基図だとinterleavedのdeck押し出しが地面に潰れる。overlaidにして
-    // 3D建物を自前深度で最前面に立てる(ツアー終了時にinterleavedへ戻す)
-    if (renderer.setInterleaved) renderer.setInterleaved(false);
   }
   if ($('tour-blur').checked) startTourBlur();
   if ($('tour-rec').checked) startTourRecording();   // ブラー有効時は合成キャンバスを録画
-  let tourBldPromise = null;
-  tour = createTourPlayer(renderer, spec, {
-    getRoute: getTourRoute,
-    onPhase: async (phase, city) => {
-      const el = $('loadnote');
-      const label = { dive: '🦅 急降下', cruise: '🏎 疾走中', climb: '🚀 上昇' }[phase] || phase;
-      el.textContent = city ? `ツアー: ${label} — ${city.name}` : `ツアー: ${label}`;
-      el.style.display = 'block';
-      // 3D建物チェックOFFなら航空写真だけの純粋なフライオーバー(建物フェッチもしない)
-      if (!$('tour-bld3d').checked) return;
-      // 画面外の建物も毎フレーム頂点演算される(deckはカリングしない)ため、
-      // 疾走中はメガ建物レイヤーを外し、都市周辺(半径4.5km)だけの軽量版に差し替える。
-      if (phase === 'dive' && city) {
-        tourBldPromise = fetch(`/api/buildings?center=${city.lon},${city.lat}&radius=4500&limit=150000&format=bin`)
-          .then((r) => (r.ok ? r.arrayBuffer() : null))
-          .then((ab) => (ab ? jrbToBuildingChunks(ab, { defaultHeight: 8, withNames: false }) : null))
-          .catch(() => null);
-      } else if (phase === 'cruise') {
-        const bin = await tourBldPromise;
-        if (bin && tour) {
-          const data = { binary: { chunks: bin.chunks } };
-          if (renderer.getLayers().some((l) => l.id === 'tour-bld')) renderer.updateLayerData('tour-bld', data);
-          else renderer.addLayer({ id: 'tour-bld', type: 'polygons', zIndex: 6, data, style: { color: '#8d99ae', opacity: 230 } });
-          renderer.setLayerVisible('tour-bld', true);
-          renderer.setLayerVisible('buildings', false);   // 29M級はGPU演算から外す
-        }
-      } else if (phase === 'climb') {
-        renderer.setLayerVisible('tour-bld', false);
-        // メガ建物(全国29M等)はツアー中ずっとOFFのまま — 俯瞰で再表示すると
-        // 1.88億頂点/フレームが復活してFPSを落とすため。都市の建物はスワップが出す
-      }
-    },
-    onDone: () => {
-      $('loadnote').textContent = 'ツアー終了🏁 (録画がDLされます)';
-      stopTour();
-    },
-  });
+  const onDone = () => {
+    $('loadnote').textContent = 'ツアー終了🏁 (録画がDLされます)';
+    stopTour();
+  };
+  if (spec.mode === 'cuts') {
+    // カット割り: 都市間は移動せず切り替わる。都市ごとの振り付けを見せる
+    const total = tourSeconds(spec);
+    tour = createCutTour(renderer, spec, {
+      onShot: (city) => {
+        const el = $('loadnote');
+        el.textContent = `ツアー: ${city.name}  (${Math.round(tour ? tour.state.elapsed : 0)}/${Math.round(total)}秒)`;
+        el.style.display = 'block';
+      },
+      onDone,
+    });
+  } else {
+    tour = createTourPlayer(renderer, spec, {
+      getRoute: getTourRoute,
+      onPhase: (phase, city) => {
+        const el = $('loadnote');
+        const label = { dive: '🦅 急降下', cruise: '🏎 疾走中', climb: '🚀 上昇' }[phase] || phase;
+        el.textContent = city ? `ツアー: ${label} — ${city.name}` : `ツアー: ${label}`;
+        el.style.display = 'block';
+      },
+      onDone,
+    });
+  }
   tour.start();
-  $('tour-btn').textContent = '⏹ ツアー停止';
-  $('tour-btn').classList.add('active');
+  $(btnId).textContent = '⏹ ツアー停止';
+  $(btnId).classList.add('active');
+}
+for (const id of Object.keys(TOURS)) $(id).addEventListener('click', () => startTour(id));
+
+// --- ✈ フライトモード: ゲームパッドで自由飛行(マッハ10まで) -----------------------
+// tour.js が「再生」、flight.js が「操縦」。物理は flight.js、入力は flight-input.js。
+let flight = null;
+let flightInput = null;
+let flyHudAt = 0;
+
+const MAP_HANDLERS = ['dragPan', 'scrollZoom', 'dragRotate', 'keyboard', 'touchZoomRotate', 'doubleClickZoom'];
+function setMapInteractive(on) {
+  const map = renderer.getMap();
+  for (const h of MAP_HANDLERS) { if (map[h]) { if (on) map[h].enable(); else map[h].disable(); } }
+}
+
+function updateFlyHud(s) {
+  const now = performance.now();
+  if (now - flyHudAt < 100) return;   // HUDのDOM更新は10Hzで十分(マッハ10でもFPSを食わない)
+  flyHudAt = now;
+  const mach = $('hud-mach');
+  mach.textContent = s.mach.toFixed(2);
+  mach.className = 'v' + (s.mach >= 5 ? ' crit' : s.mach >= 1 ? ' warn' : '');
+  $('hud-kmh').textContent = `${Math.round(s.speed * 3.6).toLocaleString()} km/h`;
+  $('hud-alt').textContent = s.alt >= 1000 ? `${(s.alt / 1000).toFixed(1)} km` : `${Math.round(s.alt)} m`;
+  $('hud-vs').textContent = `${s.vsMps >= 0 ? '+' : ''}${Math.round(s.vsMps)} m/s`;
+  $('hud-hdg').textContent = String(Math.round(s.heading)).padStart(3, '0') + '°';
+  $('hud-bank').textContent = `${Math.round(s.bank)}°`;
+  const g = $('hud-g');
+  g.textContent = s.gLoad.toFixed(1);
+  g.className = 'v' + (s.gLoad >= 4 ? ' crit' : s.gLoad >= 2.5 ? ' warn' : '');
+  $('hud-thr').style.width = `${Math.round(s.throttle * 100)}%`;
+  $('hud-pad').textContent = flightInput && flightInput.hasPad()
+    ? '🎮 ゲームパッド — 左スティック=機首と旋回 / RT・LT=速く・遅く / A=加速 / B=水平 / Esc=終了'
+    : '⌨ W・S=速く・遅く / ↑↓=機首上げ下げ / ←→=左右に曲がる / X=水平に戻す / Esc=終了';
+
+}
+
+function stopFlight() {
+  if (!flight) return;
+  flight.stop();
+  flight = null;
+  if (flightInput) { flightInput.dispose(); flightInput = null; }
+  setMapInteractive(true);
+  $('hud').classList.remove('on');
+  $('fly-btn').textContent = '✈ 離陸 (ゲームパッド/キーボード)';
+  $('fly-btn').classList.remove('active');
+}
+
+// フライトもツアーと同じく、レイヤーにも基図にも触らない。見えているものの中を飛ぶ。
+$('fly-btn').addEventListener('click', () => {
+  if (flight) { stopFlight(); return; }
+  if (tour) stopTour();            // ツアーと自由飛行は排他
+  setMapInteractive(false);        // 毎フレームjumpToするのでマウス操作は切る
+  flight = createFlightSim(renderer, {
+    // 既定は東京駅上空600m・時速100km(flight.jsの既定値)。北を向いて水平飛行から。
+    readInput: (dt) => flightInput.poll(dt),
+    onState: updateFlyHud,
+  });
+  if ($('fly-here').checked) flight.syncFromMap();   // 今見ている場所・向きから飛ぶ
+  flightInput = createFlightInput({ initialThrottle: flight.state.throttle });
+  flight.start();
+  $('hud').classList.add('on');
+  $('fly-btn').textContent = '⏹ 着陸 (フライト終了)';
+  $('fly-btn').classList.add('active');
 });
+
+window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && flight) stopFlight(); });
 
 // ドームセレクタ(🔦): 地図中心+半径Rで建物を選択し、円環+統計(件数/最高/平均)を出す。
 // 「上限切り詰めの円盤(under the dome)」が地域セレクタとして案外良かったので正式機能化。
